@@ -1,0 +1,1684 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Pipeline Manager — Shaadi.com Telesales</title>
+<link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@300;400;500;600;700&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+
+<script type="module">
+  import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
+  import { getAuth, signInWithEmailAndPassword, signOut, onAuthStateChanged }
+    from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
+  import { getFirestore, collection, addDoc, getDocs, doc, updateDoc, deleteDoc, setDoc,
+    query, where, serverTimestamp, onSnapshot, writeBatch, getDocs as getDocsOnce }
+    from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
+
+  const firebaseConfig = {
+    apiKey: "AIzaSyBSo-Uba9_FI2L_XjKMMZTK3hlBxyqG-TY",
+    authDomain: "shaadi-pipeline.firebaseapp.com",
+    projectId: "shaadi-pipeline",
+    storageBucket: "shaadi-pipeline.firebasestorage.app",
+    messagingSenderId: "684917985158",
+    appId: "1:684917985158:web:20af35a6728c07ffd66607"
+  };
+
+  const app = initializeApp(firebaseConfig);
+  const auth = getAuth(app);
+  const db = getFirestore(app);
+
+  const TEAM_MAP = {
+    "pradipta.b@peopleinteractive.in": { name: "Pradipta", role: "rm", zone: "All" },
+    "jyoti.d@peopleinteractive.in":    { name: "Jyoti",    role: "tm", zone: "East" },
+    "yash.o@peopleinteractive.in":     { name: "Yash Oza", role: "tm", zone: "West AHM" },
+    "ashutosh.sha@peopleinteractive.in": { name: "Ashutosh", role: "tm", zone: "West Thane" },
+    "puja.pandey@peopleinteractive.in":  { name: "Puja",     role: "tl", tm: "jyoti.d@peopleinteractive.in", zone: "East" },
+    "taukir.a@peopleinteractive.in":     { name: "Taukir",   role: "tl", tm: "jyoti.d@peopleinteractive.in", zone: "East" },
+    "supratik.p@peopleinteractive.in":   { name: "Supratik", role: "tl", tm: "jyoti.d@peopleinteractive.in", zone: "East" },
+    "tanu.p@peopleinteractive.in":       { name: "Tanu",     role: "tl", tm: "jyoti.d@peopleinteractive.in", zone: "East" },
+    "yash.purohit@peopleinteractive.in": { name: "Yash Purohit", role: "tl", tm: "yash.o@peopleinteractive.in", zone: "West AHM" },
+    "yogesh.yadav@peopleinteractive.in": { name: "Yogesh",       role: "tl", tm: "yash.o@peopleinteractive.in", zone: "West AHM" },
+    "mili.k@peopleinteractive.in":       { name: "Mili",         role: "tl", tm: "yash.o@peopleinteractive.in", zone: "West AHM" },
+    "somnath.p@peopleinteractive.in":  { name: "Somnath", role: "tl", tm: "ashutosh.sha@peopleinteractive.in", zone: "West Thane" },
+    "roshan.s@peopleinteractive.in":   { name: "Roshan",  role: "tl", tm: "ashutosh.sha@peopleinteractive.in", zone: "West Thane" },
+    "nayana.p@peopleinteractive.in":   { name: "Nayna",   role: "tl", tm: "ashutosh.sha@peopleinteractive.in", zone: "West Thane" },
+    "naisha.k@peopleinteractive.in":   { name: "Naisha",  role: "tl", tm: "ashutosh.sha@peopleinteractive.in", zone: "West Thane" },
+    "jhuma.d@peopleinteractive.in":    { name: "Jhuma",   role: "tl", tm: "jyoti.d@peopleinteractive.in", zone: "East" },
+  };
+
+  const ZONES = [
+    { name: "East",        tm: "jyoti.d@peopleinteractive.in",
+      tls: ["puja.pandey@peopleinteractive.in","taukir.a@peopleinteractive.in","supratik.p@peopleinteractive.in","tanu.p@peopleinteractive.in","jhuma.d@peopleinteractive.in"] },
+    { name: "West AHM",   tm: "yash.o@peopleinteractive.in",
+      tls: ["yash.purohit@peopleinteractive.in","yogesh.yadav@peopleinteractive.in","mili.k@peopleinteractive.in"] },
+    { name: "West Thane", tm: "ashutosh.sha@peopleinteractive.in",
+      tls: ["somnath.p@peopleinteractive.in","roshan.s@peopleinteractive.in","nayana.p@peopleinteractive.in","naisha.k@peopleinteractive.in"] },
+  ];
+
+  const PLAN_BG   = { "VIP Lite 3": "#E6F1FB", "VIP Lite 6": "#EAF3DE", "VIP Plus 3": "#FAEEDA", "VIP Plus 6": "#EEEDFE" };
+  const PLAN_TEXT = { "VIP Lite 3": "#0C447C", "VIP Lite 6": "#27500A", "VIP Plus 3": "#633806", "VIP Plus 6": "#3C3489" };
+
+  // Dynamic team state (can be overridden from Firestore)
+  let dynamicTeam = null; // null = use static TEAM_MAP
+  let dynamicZones = null;
+
+  function getTeamMap() { return dynamicTeam || TEAM_MAP; }
+  function getZones() { return dynamicZones || ZONES; }
+
+  async function loadDynamicTeam() {
+    try {
+      const snap = await getDocs(collection(db, "team_config"));
+      if(!snap.empty) {
+        const data = snap.docs[0].data();
+        if(data.teamMap) dynamicTeam = data.teamMap;
+        if(data.zones) dynamicZones = data.zones;
+      }
+    } catch(e) { console.log("Using static team config"); }
+  }
+
+  async function saveTeamConfig() {
+    try {
+      const snap = await getDocs(collection(db,"team_config"));
+      const docRef = snap.empty ? doc(collection(db,"team_config")) : snap.docs[0].ref;
+      await setDoc(docRef, { teamMap: getTeamMap(), zones: getZones(), updatedAt: serverTimestamp() });
+      showToast("Team configuration saved!", "success");
+    } catch(e) { showToast("Save failed: "+e.message,"error"); }
+  }
+
+  let currentUser = null, currentProfile = null, currentSlot = "12 PM";
+  let allEntries = [], weeklyData = [], unsubscribe = null;
+  let charts = {};
+
+  /* ---- HELPERS ---- */
+  function todayStr() { return new Date().toISOString().split("T")[0]; }
+  function pct(a,b) { return b ? Math.round(a/b*100) : 0; }
+  function inr(n) { return "₹" + Number(n||0).toLocaleString("en-IN"); }
+  function statusClass(s) { return s==="converted"?"s-converted":s==="lost"?"s-lost":s==="postponed"?"s-postponed":"s-pending"; }
+  function statusLabel(s) { return s==="converted"?"Converted":s==="lost"?"Lost":s==="postponed"?"Postponed":"Pending"; }
+  function planPill(p) { return `<span class="plan-pill" style="background:${PLAN_BG[p]||"#eee"};color:${PLAN_TEXT[p]||"#333"}">${p}</span>`; }
+
+  // Projection adherence thresholds: >=90 green, 80-89 amber, <80 red
+  function adherenceColor(p) { return p>=90?"#27500A":p>=80?"#854F0B":"#A32D2D"; }
+  function adherenceBg(p)    { return p>=90?"#EAF3DE":p>=80?"#FAEEDA":"#FCEBEB"; }
+  function adherenceLabel(p) { return p>=90?"On Track":p>=80?"Watch":"At Risk"; }
+
+  function showToast(msg, type="info") {
+    const t=document.getElementById("toast"); t.textContent=msg;
+    t.className="toast toast-"+type+" show"; setTimeout(()=>t.classList.remove("show"),3500);
+  }
+  function setLoading(on) { document.getElementById("loader").style.display=on?"flex":"none"; }
+
+  function getWeekDates() {
+    const today = new Date();
+    const day = today.getDay(); // 0=Sun
+    const monday = new Date(today); monday.setDate(today.getDate() - (day===0?6:day-1));
+    const dates = [];
+    for(let i=0;i<7;i++) { const d=new Date(monday); d.setDate(monday.getDate()+i); dates.push(d.toISOString().split("T")[0]); }
+    return dates;
+  }
+
+  /* ---- TL GUIDANCE ENGINE ---- */
+  function getTLGuidance(mine) {
+    const total = mine.length, conv = mine.filter(e=>e.status==="converted").length;
+    const lost = mine.filter(e=>e.status==="lost").length, pending = total-conv-lost;
+    const ach = pct(conv, total);
+    const projRev = mine.reduce((a,e)=>a+e.revenue,0);
+    const achRev = mine.filter(e=>e.status==="converted").reduce((a,e)=>a+(e.actualRevenue||e.revenue),0);
+
+    const notes = [];
+    if(total===0) notes.push({type:"info",icon:"💡",text:"No projections submitted yet today. Start by adding your pipeline IDs for the 12 PM slot."});
+    if(total>0 && ach>=90) notes.push({type:"success",icon:"🎯",text:`Excellent work! You're at ${ach}% conversion. Stay consistent through the remaining slots.`});
+    if(total>0 && ach>=80 && ach<90) notes.push({type:"amber",icon:"⚠️",text:`You're at ${ach}% — just below target. Focus on closing your ${pending} pending cases before EOD.`});
+    if(total>0 && ach<80 && ach>0) notes.push({type:"danger",icon:"🔴",text:`Conversion at ${ach}% — below the 80% threshold. Prioritize follow-ups on pending members immediately.`});
+    if(lost>1) notes.push({type:"danger",icon:"📉",text:`${lost} cases marked lost today. Review what went wrong — plan, pricing, or timing — to avoid repeat.`});
+    if(pending>2) notes.push({type:"amber",icon:"⏰",text:`${pending} cases still pending. Reach out before the next slot deadline to improve today's score.`});
+    if(total>=4) notes.push({type:"info",icon:"📊",text:`Good pipeline volume (${total} IDs). Ensure all pending members are followed up in the next slot.`});
+    if(projRev>0 && achRev/projRev < 0.7 && conv>0) notes.push({type:"amber",icon:"💰",text:`Revenue achievement at ${Math.round(achRev/projRev*100)}% of projection. Try upselling to higher plans for pending members.`});
+    return notes;
+  }
+
+  /* ---- AUTH ---- */
+  onAuthStateChanged(auth, async user => {
+    if(user) {
+      await loadDynamicTeam();
+      currentUser=user; currentProfile=getTeamMap()[user.email];
+      if(!currentProfile){ currentProfile=TEAM_MAP[user.email]; } // fallback
+      if(!currentProfile){await signOut(auth);return;}
+      document.getElementById("login-screen").style.display="none";
+      document.getElementById("app").style.display="block";
+      document.getElementById("user-name").textContent=currentProfile.name;
+      document.getElementById("user-zone").textContent=currentProfile.zone;
+      const b=document.getElementById("user-badge");
+      b.textContent=currentProfile.role==="rm"?"RM":currentProfile.role.toUpperCase(); b.className="badge badge-"+(currentProfile.role==="rm"?"admin":currentProfile.role);
+      setupNav(); subscribeEntries(); loadWeeklyData();
+    } else {
+      currentUser=null; currentProfile=null;
+      document.getElementById("login-screen").style.display="flex";
+      document.getElementById("app").style.display="none";
+      if(unsubscribe){unsubscribe();unsubscribe=null;}
+    }
+  });
+
+  window.doLogin = async function() {
+    const email=document.getElementById("l-email").value.trim();
+    const pass=document.getElementById("l-pass").value;
+    if(!email||!pass){showToast("Enter email and password","error");return;}
+    setLoading(true);
+    try { await signInWithEmailAndPassword(auth,email,pass); }
+    catch(e){ showToast("Invalid credentials. Try again.","error"); }
+    setLoading(false);
+  };
+  window.doLogout = async function(){ await signOut(auth); };
+
+  /* ---- REALTIME SUBSCRIPTION ---- */
+  function subscribeEntries() {
+    const q=query(collection(db,"entries"),where("date","==",todayStr()));
+    unsubscribe=onSnapshot(q, snap=>{
+      allEntries=snap.docs.map(d=>({id:d.id,...d.data()})).sort((a,b)=>(a.createdAt?.seconds||0)-(b.createdAt?.seconds||0));
+      renderCurrentView();
+    }, err=>{ showToast("Data error: "+err.message,"error"); });
+  }
+
+  async function loadWeeklyData() {
+    const dates=getWeekDates();
+    try {
+      const q=query(collection(db,"entries"),where("date","in",dates));
+      const snap=await getDocs(q);
+      weeklyData=snap.docs.map(d=>({id:d.id,...d.data()}));
+      renderCurrentView();
+    } catch(e){ console.error("Weekly load error",e); }
+  }
+
+  /* ---- NAV ---- */
+  function setupNav() {
+    const role=currentProfile.role;
+    const nav=document.getElementById("main-nav");
+    if(role==="tl") {
+      nav.innerHTML=`<button class="nav-btn active" data-section="tl">📋 My Pipeline</button>
+        <button class="nav-btn" data-section="weekly">📅 Weekly Report</button>
+        <button class="nav-btn" data-section="trends">📈 Trends</button>`;
+    } else if(role==="tm") {
+      nav.innerHTML=`<button class="nav-btn active" data-section="tm">📊 Zone Dashboard</button>
+        <button class="nav-btn" data-section="weekly">📅 Weekly Report</button>
+        <button class="nav-btn" data-section="trends">📈 Trends</button>
+        <button class="nav-btn" data-section="team-mgmt">👥 My Team</button>`;
+    } else {
+      nav.innerHTML=`<button class="nav-btn active" data-section="admin">🌐 Overview</button>
+        <button class="nav-btn" data-section="weekly">📅 Weekly Report</button>
+        <button class="nav-btn" data-section="trends">📈 Trends</button>
+        <button class="nav-btn" data-section="history">📆 History</button>
+        <button class="nav-btn" data-section="team-mgmt">👥 Team</button>
+        <button class="nav-btn" data-section="data-mgmt">🗑️ Data</button>`;
+    } else if(role==="rm") {
+      nav.innerHTML=`<button class="nav-btn active" data-section="admin">🌐 Overview</button>
+        <button class="nav-btn" data-section="weekly">📅 Weekly Report</button>
+        <button class="nav-btn" data-section="trends">📈 Trends</button>
+        <button class="nav-btn" data-section="history">📆 History</button>
+        <button class="nav-btn" data-section="team-mgmt">👥 Team</button>
+        <button class="nav-btn" data-section="data-mgmt">🗑️ Data</button>`;
+    }
+    nav.querySelectorAll(".nav-btn").forEach(btn=>{
+      btn.addEventListener("click",()=>{
+        nav.querySelectorAll(".nav-btn").forEach(b=>b.classList.remove("active"));
+        btn.classList.add("active"); showSection(btn.dataset.section);
+      });
+    });
+    showSection(role==="rm"?"admin":role==="tm"?"tm":"tl");
+  }
+
+  function showSection(s) {
+    document.querySelectorAll(".section").forEach(el=>el.style.display="none");
+    const el=document.getElementById("section-"+s);
+    if(el) el.style.display="block";
+    renderSection(s);
+  }
+
+  function renderCurrentView() {
+    const active=document.querySelector(".section[style*='block']");
+    if(active) renderSection(active.id.replace("section-",""));
+  }
+
+  function renderSection(s) {
+    if(s==="tl")        renderTL();
+    if(s==="tm")        renderTM();
+    if(s==="admin")     renderAdmin();
+    if(s==="weekly")    renderWeekly();
+    if(s==="history")   renderHistory();
+    if(s==="team-mgmt") renderTeamMgmt();
+    if(s==="data-mgmt") renderDataMgmt();
+    if(s==="trends")     renderTrends();
+  }
+
+  window.setSlot = function(el,slot) {
+    currentSlot=slot;
+    document.querySelectorAll(".slot-tab").forEach(b=>b.classList.remove("active"));
+    el.classList.add("active");
+    document.getElementById("slot-label").textContent="Slot: "+slot;
+  };
+
+  /* ---- ADD ENTRY ---- */
+  window.addEntry = async function() {
+    const mid=document.getElementById("f-id").value.trim().toUpperCase();
+    const mname=document.getElementById("f-name").value.trim();
+    const plan=document.getElementById("f-plan").value;
+    const rev=parseInt(document.getElementById("f-rev").value)||0;
+    const remark=document.getElementById("f-remark").value.trim();
+    if(!mid||!mname||!plan){showToast("Member ID, Name and Plan are required","error");return;}
+    if(rev<=0){showToast("Please enter expected revenue","error");return;}
+    const exists=allEntries.find(e=>e.memberId===mid&&e.tlEmail===currentUser.email&&e.date===todayStr());
+    if(exists){showToast("This Member ID is already in today's pipeline","error");return;}
+    setLoading(true);
+    try {
+      await addDoc(collection(db,"entries"),{
+        tlEmail:currentUser.email, tlName:currentProfile.name,
+        tmEmail:currentProfile.tm||"", zone:currentProfile.zone,
+        date:todayStr(), memberId:mid, memberName:mname,
+        plan, revenue:rev, remark, slot:currentSlot, status:"pending",
+        heat:document.getElementById("f-heat").value||"WARM",
+        isUnplanned:false, createdAt:serverTimestamp(), submittedSlot:currentSlot,
+      });
+      ["f-id","f-name","f-rev","f-remark"].forEach(i=>document.getElementById(i).value="");
+      document.getElementById("f-plan").value="";
+      showToast("Entry added successfully","success");
+    } catch(e){ showToast("Failed: "+e.message,"error"); }
+    setLoading(false);
+  };
+
+  window.markStatus = async function(id,status) {
+    if(status==="converted") {
+      openModal("convert",id);
+    } else if(status==="postponed") {
+      openModal("postpone",id);
+    } else {
+      setLoading(true);
+      try { await updateDoc(doc(db,"entries",id),{status,actualRevenue:0,updatedAt:serverTimestamp()}); showToast("Marked as Lost","error"); }
+      catch(e){showToast("Update failed","error");}
+      setLoading(false);
+      loadWeeklyData();
+    }
+  };
+
+  window.openModal = function(type,id) {
+    document.getElementById("modal-overlay").style.display="flex";
+    document.getElementById("modal-convert").style.display=type==="convert"?"block":"none";
+    document.getElementById("modal-postpone").style.display=type==="postpone"?"block":"none";
+    document.getElementById("modal-unplanned").style.display=type==="unplanned"?"block":"none";
+    document.getElementById("modal-pw").style.display=type==="pw"?"block":"none";
+    const atl=document.getElementById("modal-add-tl"); if(atl) atl.style.display=type==="add-tl"?"block":"none";
+    document.getElementById("modal-overlay").dataset.entryId=id||"";
+    // Pre-fill convert revenue
+    if(type==="convert"&&id){
+      const entry=allEntries.find(e=>e.id===id);
+      if(entry) document.getElementById("m-actual-rev").value=entry.revenue;
+    }
+    // Default postpone datetime
+    if(type==="postpone"){
+      const now=new Date(); now.setDate(now.getDate()+1);
+      document.getElementById("m-postpone-date").value=now.toISOString().split("T")[0];
+      document.getElementById("m-postpone-time").value="10:00";
+    }
+  };
+
+  window.closeModal = function() {
+    document.getElementById("modal-overlay").style.display="none";
+    ["m-actual-rev","m-postpone-note","m-unplanned-id","m-unplanned-name","m-unplanned-rev","m-unplanned-remark","m-pw-current","m-pw-new","m-pw-confirm"].forEach(id=>{const el=document.getElementById(id);if(el)el.value="";});
+    document.getElementById("m-unplanned-plan").value="";
+  };
+
+  window.submitConvert = async function() {
+    const id=document.getElementById("modal-overlay").dataset.entryId;
+    const actualRev=parseInt(document.getElementById("m-actual-rev").value)||0;
+    if(!actualRev){showToast("Please enter actual revenue","error");return;}
+    setLoading(true);
+    try {
+      await updateDoc(doc(db,"entries",id),{status:"converted",actualRevenue:actualRev,updatedAt:serverTimestamp()});
+      showToast("Converted! Revenue: "+inr(actualRev),"success");
+    } catch(e){showToast("Update failed","error");}
+    setLoading(false); closeModal(); loadWeeklyData();
+  };
+
+  window.submitPostpone = async function() {
+    const id=document.getElementById("modal-overlay").dataset.entryId;
+    const pDate=document.getElementById("m-postpone-date").value;
+    const pTime=document.getElementById("m-postpone-time").value;
+    const pNote=document.getElementById("m-postpone-note").value.trim();
+    if(!pDate||!pTime){showToast("Please select date and time","error");return;}
+    setLoading(true);
+    try {
+      await updateDoc(doc(db,"entries",id),{status:"postponed",postponedTo:pDate+" "+pTime,postponeNote:pNote,updatedAt:serverTimestamp()});
+      showToast("Marked as Postponed to "+pDate+" "+pTime,"info");
+    } catch(e){showToast("Update failed","error");}
+    setLoading(false); closeModal(); loadWeeklyData();
+  };
+
+  window.submitUnplanned = async function() {
+    const mid=document.getElementById("m-unplanned-id").value.trim().toUpperCase();
+    const mname=document.getElementById("m-unplanned-name").value.trim();
+    const plan=document.getElementById("m-unplanned-plan").value;
+    const rev=parseInt(document.getElementById("m-unplanned-rev").value)||0;
+    const remark=document.getElementById("m-unplanned-remark").value.trim();
+    if(!mid||!mname||!plan||!rev){showToast("All fields required","error");return;}
+    setLoading(true);
+    try {
+      await addDoc(collection(db,"entries"),{
+        tlEmail:currentUser.email,tlName:currentProfile.name,
+        tmEmail:currentProfile.tm||"",zone:currentProfile.zone,
+        date:todayStr(),memberId:mid,memberName:mname,
+        plan,revenue:rev,remark,slot:currentSlot,status:"pending",
+        isUnplanned:true,createdAt:serverTimestamp(),submittedSlot:currentSlot,
+      });
+      showToast("Unplanned case added!","success");
+    } catch(e){showToast("Failed: "+e.message,"error");}
+    setLoading(false); closeModal();
+  };
+
+  window.submitPasswordChange = async function() {
+    const {updatePassword,reauthenticateWithCredential,EmailAuthProvider}=await import("https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js");
+    const curr=document.getElementById("m-pw-current").value;
+    const nw=document.getElementById("m-pw-new").value;
+    const conf=document.getElementById("m-pw-confirm").value;
+    if(!curr||!nw||!conf){showToast("Fill all fields","error");return;}
+    if(nw!==conf){showToast("New passwords do not match","error");return;}
+    if(nw.length<8){showToast("Password must be at least 8 characters","error");return;}
+    setLoading(true);
+    try {
+      const cred=EmailAuthProvider.credential(currentUser.email,curr);
+      await reauthenticateWithCredential(currentUser,cred);
+      await updatePassword(currentUser,nw);
+      showToast("Password changed successfully!","success");
+      closeModal();
+    } catch(e){showToast("Error: "+e.message,"error");}
+    setLoading(false);
+  };
+
+  window.deleteEntry = async function(id,submittedSlot) {
+    if(submittedSlot!==currentSlot){showToast("Can only delete entries from the current slot","error");return;}
+    if(!confirm("Delete this entry?")) return;
+    setLoading(true);
+    try { await deleteDoc(doc(db,"entries",id)); showToast("Deleted","info"); }
+    catch(e){showToast("Delete failed","error");}
+    setLoading(false);
+  };
+
+  /* ---- CHART HELPER ---- */
+  function destroyChart(id) { if(charts[id]){charts[id].destroy();delete charts[id];} }
+
+  function makeBarChart(canvasId, labels, projected, achieved, adherences) {
+    destroyChart(canvasId);
+    const ctx=document.getElementById(canvasId);
+    if(!ctx) return;
+    const bgColors=adherences.map(p=>adherenceBg(p)+"CC");
+    const borderColors=adherences.map(p=>adherenceColor(p));
+    charts[canvasId]=new Chart(ctx,{
+      type:"bar",
+      data:{
+        labels,
+        datasets:[
+          {label:"Projected IDs",data:projected,backgroundColor:"#B5D4F4",borderColor:"#0C447C",borderWidth:1,borderRadius:4},
+          {label:"Converted",data:achieved,backgroundColor:bgColors,borderColor:borderColors,borderWidth:1.5,borderRadius:4}
+        ]
+      },
+      options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{position:"top",labels:{font:{size:11},boxWidth:12}},tooltip:{callbacks:{afterLabel:(ctx)=>{const p=adherences[ctx.dataIndex];return "Adherence: "+p+"% ("+adherenceLabel(p)+")";}}}},scales:{y:{beginAtZero:true,ticks:{font:{size:10}},grid:{color:"rgba(0,0,0,0.04)"}},x:{ticks:{font:{size:10}},grid:{display:false}}}}
+    });
+  }
+
+  function makeLineChart(canvasId, labels, datasets) {
+    destroyChart(canvasId);
+    const ctx=document.getElementById(canvasId);
+    if(!ctx) return;
+    charts[canvasId]=new Chart(ctx,{
+      type:"line",
+      data:{labels,datasets},
+      options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{position:"top",labels:{font:{size:11},boxWidth:12}}},scales:{y:{beginAtZero:true,max:100,ticks:{callback:v=>v+"%",font:{size:10}},grid:{color:"rgba(0,0,0,0.04)"}},x:{ticks:{font:{size:10}},grid:{display:false}}}}
+    });
+  }
+
+  function makeDonutChart(canvasId, labels, data, colors) {
+    destroyChart(canvasId);
+    const ctx=document.getElementById(canvasId);
+    if(!ctx) return;
+    charts[canvasId]=new Chart(ctx,{
+      type:"doughnut",
+      data:{labels,datasets:[{data,backgroundColor:colors,borderWidth:1.5,borderColor:"#fff"}]},
+      options:{responsive:true,maintainAspectRatio:false,cutout:"65%",plugins:{legend:{position:"bottom",labels:{font:{size:10},boxWidth:10}}}}
+    });
+  }
+
+  /* ---- TL RENDER ---- */
+  function renderTL() {
+    const mine=allEntries.filter(e=>e.tlEmail===currentUser.email);
+    const conv=mine.filter(e=>e.status==="converted");
+    const lost=mine.filter(e=>e.status==="lost");
+    const projRev=mine.reduce((a,e)=>a+e.revenue,0);
+    const achRev=conv.reduce((a,e)=>a+(e.actualRevenue||e.revenue),0);
+    const p=pct(conv.length,mine.length);
+    const revPct=projRev?Math.round(achRev/projRev*100):0;
+    const ac=adherenceColor(p), ab=adherenceBg(p), al=adherenceLabel(p);
+
+    document.getElementById("tl-metrics").innerHTML=`
+      <div class="metric"><div class="mlabel">Projected IDs</div><div class="mval">${mine.length}</div></div>
+      <div class="metric"><div class="mlabel">Converted</div><div class="mval" style="color:#27500A">${conv.length}</div></div>
+      <div class="metric"><div class="mlabel">Lost</div><div class="mval" style="color:#A32D2D">${lost.length}</div></div>
+      <div class="metric"><div class="mlabel">Pending</div><div class="mval">${mine.length-conv.length-lost.length}</div></div>
+      <div class="metric" style="background:${ab};border-color:${ac}40"><div class="mlabel" style="color:${ac}">Proj. Adherence</div><div class="mval" style="color:${ac}">${p}%</div><div class="msub" style="color:${ac}">${al}</div></div>
+      <div class="metric"><div class="mlabel">Proj. Revenue</div><div class="mval sm">${inr(projRev)}</div></div>
+      <div class="metric"><div class="mlabel">Revenue Achieved</div><div class="mval sm" style="color:#27500A">${inr(achRev)}</div></div>
+      <div class="metric"><div class="mlabel">Revenue Ach. %</div><div class="mval" style="color:${adherenceColor(revPct)}">${revPct}%</div></div>
+    `;
+
+    // Guidance notes
+    const notes=getTLGuidance(mine);
+    document.getElementById("tl-guidance").innerHTML=notes.length?notes.map(n=>`
+      <div class="guidance-note guidance-${n.type}">
+        <span class="g-icon">${n.icon}</span><span>${n.text}</span>
+      </div>`).join(""):`<div class="guidance-note guidance-success"><span class="g-icon">✅</span><span>All good! Keep maintaining your pipeline discipline.</span></div>`;
+
+    // Donut chart
+    if(mine.length>0) {
+      makeDonutChart("tl-donut",[`Converted (${conv.length})`,`Lost (${lost.length})`,`Pending (${mine.length-conv.length-lost.length})`],
+        [conv.length,lost.length,mine.length-conv.length-lost.length],["#639922","#E24B4A","#BA7517"]);
+    }
+
+    // Table
+    const tbody=document.getElementById("tl-tbody");
+    if(!mine.length){tbody.innerHTML=`<tr><td colspan="10" class="empty-cell">No entries yet — add your first projection above</td></tr>`;return;}
+    tbody.innerHTML=mine.map(e=>{
+      const canEdit=e.submittedSlot===currentSlot&&e.status==="pending";
+      const sc=statusClass(e.status),sl=statusLabel(e.status);
+      const heatColor=e.heat==="HOT"?"#A32D2D":e.heat==="COLD"?"#0C447C":"#854F0B";
+      const heatBg=e.heat==="HOT"?"#FCEBEB":e.heat==="COLD"?"#E6F1FB":"#FAEEDA";
+      return `<tr>
+        <td class="mono">${e.memberId}${e.isUnplanned?'<span class="unplanned-badge">NEW</span>':''}</td><td>${e.memberName}</td>
+        <td>${planPill(e.plan)}</td>
+        <td><span class="heat-pill" style="background:${heatBg};color:${heatColor}">${e.heat||"WARM"}</span></td>
+        <td>${inr(e.revenue)}</td>
+        <td>${e.status==="converted"?`<span style="color:#27500A;font-weight:500">${inr(e.actualRevenue||e.revenue)}</span>`:e.status==="postponed"?`<span style="color:#854F0B;font-size:11px">→ ${e.postponedTo||"TBD"}</span>`:"—"}</td>
+        <td><span class="slot-pill">${e.slot}</span></td>
+        <td>${e.remark||"—"}</td>
+        <td><span class="status-pill ${sc}">${sl}</span></td>
+        <td class="actions">
+          ${e.status==="pending"?`<button class="btn-xs btn-conv" onclick="markStatus('${e.id}','converted')">✓ Convert</button><button class="btn-xs btn-lost" onclick="markStatus('${e.id}','lost')">✗ Lost</button><button class="btn-xs btn-postpone" onclick="markStatus('${e.id}','postponed')">⏱ Postpone</button>`:""}
+          ${e.status==="postponed"?`<button class="btn-xs btn-conv" onclick="markStatus('${e.id}','converted')">✓ Convert</button>`:""}
+          ${canEdit?`<button class="btn-xs btn-del" onclick="deleteEntry('${e.id}','${e.submittedSlot}')">Delete</button>`:""}
+        </td>
+      </tr>`;
+    }).join("");
+  }
+
+  /* ---- TM RENDER ---- */
+  function renderTM() {
+    const zone=ZONES.find(z=>z.tm===currentUser.email);
+    if(!zone) return;
+    const mine=allEntries.filter(e=>zone.tls.includes(e.tlEmail));
+    const conv=mine.filter(e=>e.status==="converted");
+    const projRev=mine.reduce((a,e)=>a+e.revenue,0);
+    const achRev=conv.reduce((a,e)=>a+(e.actualRevenue||e.revenue),0);
+    const p=pct(conv.length,mine.length);
+
+    document.getElementById("tm-metrics").innerHTML=`
+      <div class="metric"><div class="mlabel">Total Projected</div><div class="mval">${mine.length}</div></div>
+      <div class="metric"><div class="mlabel">Converted</div><div class="mval" style="color:#27500A">${conv.length}</div></div>
+      <div class="metric" style="background:${adherenceBg(p)};border-color:${adherenceColor(p)}40"><div class="mlabel" style="color:${adherenceColor(p)}">Zone Adherence</div><div class="mval" style="color:${adherenceColor(p)}">${p}%</div><div class="msub" style="color:${adherenceColor(p)}">${adherenceLabel(p)}</div></div>
+      <div class="metric"><div class="mlabel">Revenue Achieved</div><div class="mval sm" style="color:#27500A">${inr(achRev)}</div><div class="msub">of ${inr(projRev)}</div></div>
+    `;
+
+    // TL cards with signal badges
+    const tlCards=zone.tls.map(tlEmail=>{
+      const tl=TEAM_MAP[tlEmail]; if(!tl) return "";
+      const te=mine.filter(e=>e.tlEmail===tlEmail);
+      const tc=te.filter(e=>e.status==="converted");
+      const tp=pct(tc.length,te.length);
+      const ac=adherenceColor(tp),ab=adherenceBg(tp),al=adherenceLabel(tp);
+      const tRev=te.reduce((a,e)=>a+e.revenue,0);
+      const tAch=tc.reduce((a,e)=>a+(e.actualRevenue||e.revenue),0);
+      const signal=tp>=90?"🟢":tp>=80?"🟡":"🔴";
+      const alert=tp<80&&te.length>0?`<div class="tl-alert">⚠️ Needs attention — ${tp}% below 80% threshold</div>`:"";
+      return `<div class="tl-card" style="border-left:3px solid ${ac}">
+        <div class="tl-card-header">
+          <div>
+            <span class="tl-card-name">${signal} ${tl.name}</span>
+            <span class="adherence-badge" style="background:${ab};color:${ac}">${al} · ${tp}%</span>
+          </div>
+          <span class="tl-card-rev">${inr(tAch)} <span style="color:#9B9990;font-size:11px">/ ${inr(tRev)}</span></span>
+        </div>
+        <div class="tl-bar-row">
+          <div class="prog-bg"><div class="prog-fill" style="width:${tp}%;background:${ac}"></div></div>
+          <span style="font-size:11px;color:#6B6860">${te.length} IDs · ${tc.length} conv · ${te.length-tc.length-te.filter(e=>e.status==="lost").length} pending</span>
+        </div>
+        ${alert}
+      </div>`;
+    }).join("");
+    document.getElementById("tm-tl-cards").innerHTML=tlCards||`<p style="color:#9B9990;font-size:13px">No TL data yet</p>`;
+
+    // Bar chart
+    const tlLabels=zone.tls.map(e=>TEAM_MAP[e]?.name||e);
+    const tlProj=zone.tls.map(e=>mine.filter(x=>x.tlEmail===e).length);
+    const tlConv=zone.tls.map(e=>mine.filter(x=>x.tlEmail===e&&x.status==="converted").length);
+    const tlAdh=zone.tls.map((e,i)=>pct(tlConv[i],tlProj[i]));
+    setTimeout(()=>makeBarChart("tm-bar",tlLabels,tlProj,tlConv,tlAdh),100);
+
+    // All entries table
+    const tbody=document.getElementById("tm-tbody");
+    tbody.innerHTML=mine.length?mine.map(e=>{
+      const sc=statusClass(e.status),sl=statusLabel(e.status);
+      return `<tr><td class="fw5">${e.tlName}</td><td class="mono">${e.memberId}</td><td>${e.memberName}</td><td>${planPill(e.plan)}</td><td>${inr(e.revenue)}</td><td><span class="slot-pill">${e.slot}</span></td><td><span class="status-pill ${sc}">${sl}</span></td></tr>`;
+    }).join(""):`<tr><td colspan="7" class="empty-cell">No projections submitted yet</td></tr>`;
+  }
+
+  /* ---- ADMIN RENDER ---- */
+  function renderAdmin() {
+    const total=allEntries.length;
+    const conv=allEntries.filter(e=>e.status==="converted");
+    const lost=allEntries.filter(e=>e.status==="lost");
+    const projRev=allEntries.reduce((a,e)=>a+e.revenue,0);
+    const achRev=conv.reduce((a,e)=>a+(e.actualRevenue||e.revenue),0);
+    const p=pct(conv.length,total);
+
+    document.getElementById("admin-metrics").innerHTML=`
+      <div class="metric"><div class="mlabel">Total Pipeline</div><div class="mval">${total}</div></div>
+      <div class="metric"><div class="mlabel">Converted</div><div class="mval" style="color:#27500A">${conv.length}</div></div>
+      <div class="metric"><div class="mlabel">Lost</div><div class="mval" style="color:#A32D2D">${lost.length}</div></div>
+      <div class="metric"><div class="mlabel">Pending</div><div class="mval">${total-conv.length-lost.length}</div></div>
+      <div class="metric" style="background:${adherenceBg(p)};border-color:${adherenceColor(p)}40"><div class="mlabel" style="color:${adherenceColor(p)}">Overall Adherence</div><div class="mval" style="color:${adherenceColor(p)}">${p}%</div><div class="msub" style="color:${adherenceColor(p)}">${adherenceLabel(p)}</div></div>
+      <div class="metric"><div class="mlabel">Proj. Revenue</div><div class="mval sm">${inr(projRev)}</div></div>
+      <div class="metric"><div class="mlabel">Revenue Achieved</div><div class="mval sm" style="color:#27500A">${inr(achRev)}</div></div>
+      <div class="metric"><div class="mlabel">Revenue Gap</div><div class="mval sm" style="color:#A32D2D">${inr(projRev-achRev)}</div></div>
+    `;
+
+    // Zone cards
+    document.getElementById("admin-zones").innerHTML=ZONES.map(z=>{
+      const ze=allEntries.filter(e=>z.tls.includes(e.tlEmail));
+      const zc=ze.filter(e=>e.status==="converted");
+      const zp=pct(zc.length,ze.length);
+      const ac=adherenceColor(zp),ab=adherenceBg(zp);
+      const zRev=ze.reduce((a,e)=>a+e.revenue,0);
+      const zAch=zc.reduce((a,e)=>a+(e.actualRevenue||e.revenue),0);
+      const tm=TEAM_MAP[z.tm];
+      const signal=zp>=90?"🟢":zp>=80?"🟡":"🔴";
+      // At-risk TLs
+      const atRisk=z.tls.filter(tlE=>{const te=allEntries.filter(e=>e.tlEmail===tlE);return te.length>0&&pct(te.filter(e=>e.status==="converted").length,te.length)<80;});
+      return `<div class="zone-card" style="border-left:3px solid ${ac}">
+        <div class="zone-card-header">
+          <div><span class="zone-card-name">${signal} ${z.name}</span><span class="zone-tm-label">TM: ${tm?.name}</span></div>
+          <span class="adherence-badge" style="background:${ab};color:${ac}">${adherenceLabel(zp)} · ${zp}%</span>
+        </div>
+        <div class="tl-bar-row">
+          <div class="prog-bg" style="height:10px"><div class="prog-fill" style="width:${zp}%;background:${ac}"></div></div>
+          <span style="font-size:11px;color:#6B6860">${ze.length} IDs · ${zc.length} converted</span>
+        </div>
+        <div class="zone-rev-row"><span>${inr(zAch)}<span style="color:#9B9990;font-size:11px"> achieved</span></span><span style="color:#9B9990;font-size:12px">of ${inr(zRev)}</span></div>
+        ${atRisk.length?`<div class="tl-alert">⚠️ TLs at risk: ${atRisk.map(e=>TEAM_MAP[e]?.name).join(", ")}</div>`:""}
+      </div>`;
+    }).join("");
+
+    // Zone bar chart
+    const zLabels=ZONES.map(z=>z.name);
+    const zProj=ZONES.map(z=>allEntries.filter(e=>z.tls.includes(e.tlEmail)).length);
+    const zConv=ZONES.map(z=>allEntries.filter(e=>z.tls.includes(e.tlEmail)&&e.status==="converted").length);
+    const zAdh=ZONES.map((z,i)=>pct(zConv[i],zProj[i]));
+    setTimeout(()=>makeBarChart("admin-bar",zLabels,zProj,zConv,zAdh),100);
+
+    // Full table
+    const tbody=document.getElementById("admin-tbody");
+    tbody.innerHTML=allEntries.length?allEntries.map(e=>{
+      const sc=statusClass(e.status),sl=statusLabel(e.status);
+      const tm=TEAM_MAP[TEAM_MAP[e.tlEmail]?.tm];
+      return `<tr><td>${e.zone}</td><td>${tm?.name||"—"}</td><td>${e.tlName}</td><td class="mono">${e.memberId}</td><td>${e.memberName}</td><td>${planPill(e.plan)}</td><td>${inr(e.revenue)}</td><td>${e.status==="converted"?inr(e.actualRevenue||e.revenue):"—"}</td><td><span class="slot-pill">${e.slot}</span></td><td><span class="status-pill ${sc}">${sl}</span></td></tr>`;
+    }).join(""):`<tr><td colspan="10" class="empty-cell">No entries today yet</td></tr>`;
+  }
+
+  /* ---- WEEKLY REPORT ---- */
+  function renderWeekly() {
+    const role=currentProfile.role;
+    const dates=getWeekDates();
+    const dayLabels=["Mon","Tue","Wed","Thu","Fri","Sat","Sun"];
+
+    let relevantEntries=weeklyData;
+    if(role==="tl") relevantEntries=weeklyData.filter(e=>e.tlEmail===currentUser.email);
+    else if(role==="tm") {
+      const zone=ZONES.find(z=>z.tm===currentUser.email);
+      if(zone) relevantEntries=weeklyData.filter(e=>zone.tls.includes(e.tlEmail));
+    }
+
+    // Weekly summary metrics
+    const wTotal=relevantEntries.length;
+    const wConv=relevantEntries.filter(e=>e.status==="converted");
+    const wLost=relevantEntries.filter(e=>e.status==="lost");
+    const wProjRev=relevantEntries.reduce((a,e)=>a+e.revenue,0);
+    const wAchRev=wConv.reduce((a,e)=>a+(e.actualRevenue||e.revenue),0);
+    const wP=pct(wConv.length,wTotal);
+
+    document.getElementById("weekly-metrics").innerHTML=`
+      <div class="metric"><div class="mlabel">Week Total IDs</div><div class="mval">${wTotal}</div></div>
+      <div class="metric"><div class="mlabel">Converted</div><div class="mval" style="color:#27500A">${wConv.length}</div></div>
+      <div class="metric"><div class="mlabel">Lost</div><div class="mval" style="color:#A32D2D">${wLost.length}</div></div>
+      <div class="metric" style="background:${adherenceBg(wP)};border-color:${adherenceColor(wP)}40"><div class="mlabel" style="color:${adherenceColor(wP)}">Week Adherence</div><div class="mval" style="color:${adherenceColor(wP)}">${wP}%</div></div>
+      <div class="metric"><div class="mlabel">Proj. Revenue</div><div class="mval sm">${inr(wProjRev)}</div></div>
+      <div class="metric"><div class="mlabel">Revenue Achieved</div><div class="mval sm" style="color:#27500A">${inr(wAchRev)}</div></div>
+    `;
+
+    // Daily adherence line chart
+    const dailyAdh=dates.map(d=>{
+      const de=relevantEntries.filter(e=>e.date===d);
+      return pct(de.filter(e=>e.status==="converted").length,de.length);
+    });
+    const dailyProj=dates.map(d=>relevantEntries.filter(e=>e.date===d).length);
+    const dailyConv=dates.map(d=>relevantEntries.filter(e=>e.date===d&&e.status==="converted").length);
+
+    setTimeout(()=>{
+      makeLineChart("weekly-line",dayLabels,[
+        {label:"Adherence %",data:dailyAdh,borderColor:"#0C447C",backgroundColor:"#E6F1FB50",fill:true,tension:0.3,pointBackgroundColor:dailyAdh.map(p=>adherenceColor(p)),pointRadius:5},
+      ]);
+      makeBarChart("weekly-bar",dayLabels,dailyProj,dailyConv,dailyAdh);
+    },100);
+
+    // Per-entity breakdown
+    let breakdownHtml="";
+    if(role==="rm") {
+      breakdownHtml=`<div class="card-title">Zone-wise weekly breakdown</div>`+ZONES.map(z=>{
+        const ze=relevantEntries.filter(e=>z.tls.includes(e.tlEmail));
+        const zc=ze.filter(e=>e.status==="converted");
+        const zp=pct(zc.length,ze.length);
+        const zRev=ze.reduce((a,e)=>a+e.revenue,0);
+        const zAch=zc.reduce((a,e)=>a+(e.actualRevenue||e.revenue),0);
+        return `<div class="tl-summary-row"><div class="tl-info"><span class="tl-name">${z.name}</span><span class="tl-sub">${TEAM_MAP[z.tm]?.name} (TM) · ${ze.length} IDs</span></div>
+          <div class="tl-bar-wrap"><div class="prog-bg"><div class="prog-fill" style="width:${zp}%;background:${adherenceColor(zp)}"></div></div><span class="prog-label" style="color:${adherenceColor(zp)}">${zp}%</span></div>
+          <div class="tl-rev">${inr(zAch)}<span class="tl-sub"> / ${inr(zRev)}</span></div></div>`;
+      }).join("");
+    } else if(role==="tm") {
+      const zone=ZONES.find(z=>z.tm===currentUser.email);
+      if(zone) {
+        breakdownHtml=`<div class="card-title">TL-wise weekly breakdown</div>`+zone.tls.map(tlEmail=>{
+          const tl=TEAM_MAP[tlEmail]; if(!tl) return "";
+          const te=relevantEntries.filter(e=>e.tlEmail===tlEmail);
+          const tc=te.filter(e=>e.status==="converted");
+          const tp=pct(tc.length,te.length);
+          const tRev=te.reduce((a,e)=>a+e.revenue,0);
+          const tAch=tc.reduce((a,e)=>a+(e.actualRevenue||e.revenue),0);
+          return `<div class="tl-summary-row"><div class="tl-info"><span class="tl-name">${tl.name}</span><span class="tl-sub">${te.length} IDs · ${tc.length} conv</span></div>
+            <div class="tl-bar-wrap"><div class="prog-bg"><div class="prog-fill" style="width:${tp}%;background:${adherenceColor(tp)}"></div></div><span class="prog-label" style="color:${adherenceColor(tp)}">${tp}%</span></div>
+            <div class="tl-rev">${inr(tAch)}<span class="tl-sub"> / ${inr(tRev)}</span></div></div>`;
+        }).join("");
+      }
+    } else {
+      // TL — slot-wise breakdown
+      const slotRows=["12 PM","2 PM","3 PM","5 PM","EOD"].map(slot=>{
+        const se=relevantEntries.filter(e=>e.slot===slot);
+        const sc=se.filter(e=>e.status==="converted");
+        const sp=pct(sc.length,se.length);
+        return `<div class="tl-summary-row"><div class="tl-info"><span class="tl-name">${slot}</span><span class="tl-sub">${se.length} IDs</span></div>
+          <div class="tl-bar-wrap"><div class="prog-bg"><div class="prog-fill" style="width:${sp}%;background:${adherenceColor(sp)}"></div></div><span class="prog-label" style="color:${adherenceColor(sp)}">${sp}%</span></div>
+          <div class="tl-rev">${sc.length} converted</div></div>`;
+      }).join("");
+      breakdownHtml=`<div class="card-title">Slot-wise weekly breakdown</div>`+slotRows;
+    }
+    document.getElementById("weekly-breakdown").innerHTML=breakdownHtml;
+  }
+
+  /* ---- HISTORY ---- */
+  window.loadHistory = async function() {
+    const dateVal=document.getElementById("h-date").value;
+    if(!dateVal){showToast("Select a date","error");return;}
+    setLoading(true);
+    try {
+      const q=query(collection(db,"entries"),where("date","==",dateVal));
+      const snap=await getDocs(q);
+      let data=snap.docs.map(d=>({id:d.id,...d.data()})).sort((a,b)=>(a.createdAt?.seconds||0)-(b.createdAt?.seconds||0));
+      if(currentProfile.role==="tl") data=data.filter(e=>e.tlEmail===currentUser.email);
+      else if(currentProfile.role==="tm"){const zone=ZONES.find(z=>z.tm===currentUser.email);if(zone)data=data.filter(e=>zone.tls.includes(e.tlEmail));}
+      renderHistoryTable(data,dateVal);
+    } catch(e){showToast("Failed to load","error");}
+    setLoading(false);
+  };
+
+  function renderHistory() { document.getElementById("h-date").valueAsDate=new Date(); }
+
+  function renderHistoryTable(data,dateVal) {
+    const conv=data.filter(e=>e.status==="converted");
+    const projRev=data.reduce((a,e)=>a+e.revenue,0);
+    const achRev=conv.reduce((a,e)=>a+(e.actualRevenue||e.revenue),0);
+    const p=pct(conv.length,data.length);
+    document.getElementById("h-summary").innerHTML=`
+      <div class="metric"><div class="mlabel">Total IDs (${dateVal})</div><div class="mval">${data.length}</div></div>
+      <div class="metric"><div class="mlabel">Converted</div><div class="mval" style="color:#27500A">${conv.length}</div></div>
+      <div class="metric" style="background:${adherenceBg(p)};border-color:${adherenceColor(p)}40"><div class="mlabel" style="color:${adherenceColor(p)}">Adherence</div><div class="mval" style="color:${adherenceColor(p)}">${p}%</div></div>
+      <div class="metric"><div class="mlabel">Revenue Achieved</div><div class="mval sm" style="color:#27500A">${inr(achRev)}</div><div class="msub">of ${inr(projRev)}</div></div>
+    `;
+    document.getElementById("h-tbody").innerHTML=data.length?data.map(e=>{
+      const sc=statusClass(e.status),sl=statusLabel(e.status);
+      const tm=TEAM_MAP[TEAM_MAP[e.tlEmail]?.tm];
+      return `<tr><td>${e.zone}</td><td>${tm?.name||"—"}</td><td>${e.tlName}</td><td class="mono">${e.memberId}</td><td>${e.memberName}</td><td>${planPill(e.plan)}</td><td>${inr(e.revenue)}</td><td>${e.status==="converted"?inr(e.actualRevenue||e.revenue):"—"}</td><td><span class="slot-pill">${e.slot}</span></td><td><span class="status-pill ${sc}">${sl}</span></td></tr>`;
+    }).join(""):`<tr><td colspan="10" class="empty-cell">No entries for this date</td></tr>`;
+  }
+
+  /* ---- TREND ANALYSIS ---- */
+  window.renderTrends = async function() {
+    document.getElementById("trend-status").textContent = "Select a date range and click Generate Trends.";
+    document.getElementById("trend-chart-area").innerHTML = "";
+    document.getElementById("trend-summary-metrics").innerHTML = "";
+    // Default: last 7 days
+    const toDate = new Date();
+    const fromDate = new Date(); fromDate.setDate(toDate.getDate()-6);
+    document.getElementById("tr-from").value = fromDate.toISOString().split("T")[0];
+    document.getElementById("tr-to").value = toDate.toISOString().split("T")[0];
+  };
+
+  window.loadTrends = async function() {
+    const fromDate = document.getElementById("tr-from").value;
+    const toDate   = document.getElementById("tr-to").value;
+    const groupBy  = document.getElementById("tr-group").value;
+    if(!fromDate||!toDate){showToast("Select date range","error");return;}
+    if(fromDate>toDate){showToast("From date must be before To date","error");return;}
+
+    document.getElementById("trend-status").textContent = "Loading data...";
+    setLoading(true);
+
+    // Build array of dates in range
+    const dates = [];
+    let d = new Date(fromDate);
+    const end = new Date(toDate);
+    while(d<=end){ dates.push(d.toISOString().split("T")[0]); d.setDate(d.getDate()+1); }
+
+    try {
+      // Fetch in chunks of 10 (Firestore 'in' limit)
+      let allData = [];
+      for(let i=0;i<dates.length;i+=10){
+        const chunk = dates.slice(i,i+10);
+        const q = query(collection(db,"entries"),where("date","in",chunk));
+        const snap = await getDocs(q);
+        allData = allData.concat(snap.docs.map(d=>({id:d.id,...d.data()})));
+      }
+
+      // Filter by role
+      const role = currentProfile.role;
+      let data = allData;
+      if(role==="tl") data=allData.filter(e=>e.tlEmail===currentUser.email);
+      else if(role==="tm"){const z=getZones().find(z=>z.tm===currentUser.email);if(z)data=allData.filter(e=>z.tls.includes(e.tlEmail));}
+
+      if(!data.length){document.getElementById("trend-status").textContent="No data found for this date range.";setLoading(false);return;}
+      document.getElementById("trend-status").textContent="";
+      buildTrendCharts(data, dates, groupBy, role);
+    } catch(e){ document.getElementById("trend-status").textContent="Error: "+e.message; }
+    setLoading(false);
+  };
+
+  function buildTrendCharts(data, dates, groupBy, role) {
+    // Daily adherence and revenue trend
+    const dayLabels = dates.map(d=>{const dt=new Date(d); return dt.toLocaleDateString("en-IN",{day:"2-digit",month:"short"});});
+    const dailyAdh = dates.map(d=>{
+      const de=data.filter(e=>e.date===d);
+      return pct(de.filter(e=>e.status==="converted").length, de.length);
+    });
+    const dailyProj = dates.map(d=>data.filter(e=>e.date===d).length);
+    const dailyConv = dates.map(d=>data.filter(e=>e.date===d&&e.status==="converted").length);
+    const dailyRev  = dates.map(d=>data.filter(e=>e.date===d&&e.status==="converted").reduce((a,e)=>a+(e.actualRevenue||e.revenue),0));
+    const dailyProjRev = dates.map(d=>data.filter(e=>e.date===d).reduce((a,e)=>a+e.revenue,0));
+
+    // Summary metrics
+    const totalConv = data.filter(e=>e.status==="converted").length;
+    const totalProj = data.length;
+    const totalRev  = data.filter(e=>e.status==="converted").reduce((a,e)=>a+(e.actualRevenue||e.revenue),0);
+    const totalProjRev = data.reduce((a,e)=>a+e.revenue,0);
+    const overallAdh = pct(totalConv,totalProj);
+    const bestDay = dates[dailyAdh.indexOf(Math.max(...dailyAdh))];
+    const worstDay = dates[dailyAdh.indexOf(Math.min(...dailyAdh.filter(x=>x>0)))];
+
+    document.getElementById("trend-summary-metrics").innerHTML=`
+      <div class="metric"><div class="mlabel">Date Range</div><div class="mval sm">${dates[0]} → ${dates[dates.length-1]}</div></div>
+      <div class="metric"><div class="mlabel">Total IDs</div><div class="mval">${totalProj}</div></div>
+      <div class="metric"><div class="mlabel">Total Converted</div><div class="mval" style="color:#27500A">${totalConv}</div></div>
+      <div class="metric" style="background:${adherenceBg(overallAdh)};border-color:${adherenceColor(overallAdh)}40">
+        <div class="mlabel" style="color:${adherenceColor(overallAdh)}">Overall Adherence</div>
+        <div class="mval" style="color:${adherenceColor(overallAdh)}">${overallAdh}%</div>
+      </div>
+      <div class="metric"><div class="mlabel">Revenue Achieved</div><div class="mval sm" style="color:#27500A">₹${totalRev.toLocaleString("en-IN")}</div></div>
+      <div class="metric"><div class="mlabel">Best Day</div><div class="mval sm" style="color:#27500A">${bestDay||"—"}</div></div>
+    `;
+
+    // Entity breakdown (TL-wise for TM/Admin, slot-wise for TL)
+    let breakdownDatasets = [];
+    let breakdownLabels = dayLabels;
+
+    if(role==="tl") {
+      // For TL: show slot-wise adherence over time
+      const slots=["12 PM","2 PM","3 PM","5 PM","EOD"];
+      const colors=["#0C447C","#27500A","#854F0B","#3C3489","#A32D2D"];
+      breakdownDatasets = slots.map((slot,i)=>({
+        label: slot,
+        data: dates.map(d=>{const de=data.filter(e=>e.date===d&&e.slot===slot);return pct(de.filter(e=>e.status==="converted").length,de.length);}),
+        borderColor:colors[i], backgroundColor:colors[i]+"20", tension:0.3, fill:false, pointRadius:3,
+      }));
+    } else if(role==="tm") {
+      const zone=getZones().find(z=>z.tm===currentUser.email);
+      const colors=["#0C447C","#27500A","#854F0B","#3C3489","#A32D2D","#639922"];
+      if(zone) breakdownDatasets=zone.tls.map((tlEmail,i)=>({
+        label: getTeamMap()[tlEmail]?.name||tlEmail,
+        data: dates.map(d=>{const de=data.filter(e=>e.date===d&&e.tlEmail===tlEmail);return pct(de.filter(e=>e.status==="converted").length,de.length);}),
+        borderColor:colors[i%colors.length], backgroundColor:colors[i%colors.length]+"20", tension:0.3, fill:false, pointRadius:3,
+      }));
+    } else {
+      // Admin: zone-wise
+      const zColors=["#0C447C","#27500A","#854F0B"];
+      breakdownDatasets=getZones().map((zone,i)=>({
+        label: zone.name,
+        data: dates.map(d=>{const de=data.filter(e=>e.date===d&&zone.tls.includes(e.tlEmail));return pct(de.filter(e=>e.status==="converted").length,de.length);}),
+        borderColor:zColors[i], backgroundColor:zColors[i]+"20", tension:0.3, fill:false, pointRadius:3,
+      }));
+    }
+
+    const area = document.getElementById("trend-chart-area");
+    area.innerHTML=`
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:1rem;margin-bottom:1rem">
+        <div class="chart-box"><div class="chart-title">Daily adherence % trend</div><div class="chart-canvas-wrap"><canvas id="tc-adh"></canvas></div></div>
+        <div class="chart-box"><div class="chart-title">Daily revenue: projected vs achieved</div><div class="chart-canvas-wrap"><canvas id="tc-rev"></canvas></div></div>
+      </div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:1rem">
+        <div class="chart-box"><div class="chart-title">Daily IDs: projected vs converted</div><div class="chart-canvas-wrap"><canvas id="tc-ids"></canvas></div></div>
+        <div class="chart-box"><div class="chart-title">${role==="tl"?"Slot-wise":role==="tm"?"TL-wise":"Zone-wise"} adherence trend</div><div class="chart-canvas-wrap"><canvas id="tc-breakdown"></canvas></div></div>
+      </div>
+    `;
+
+    setTimeout(()=>{
+      // Adherence line with colour-coded points
+      destroyChart("tc-adh");
+      charts["tc-adh"]=new Chart(document.getElementById("tc-adh"),{
+        type:"line",
+        data:{labels:dayLabels,datasets:[{
+          label:"Adherence %",data:dailyAdh,borderColor:"#0C447C",backgroundColor:"#E6F1FB50",
+          fill:true,tension:0.3,
+          pointBackgroundColor:dailyAdh.map(p=>adherenceColor(p)),
+          pointRadius:5,pointHoverRadius:7,
+        },{
+          label:"Target (90%)",data:dates.map(()=>90),borderColor:"#27500A",borderDash:[5,5],borderWidth:1.5,pointRadius:0,fill:false,
+        },{
+          label:"Minimum (80%)",data:dates.map(()=>80),borderColor:"#A32D2D",borderDash:[5,5],borderWidth:1.5,pointRadius:0,fill:false,
+        }]},
+        options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{labels:{font:{size:10},boxWidth:10}}},scales:{y:{min:0,max:100,ticks:{callback:v=>v+"%",font:{size:10}},grid:{color:"rgba(0,0,0,0.04)"}},x:{ticks:{font:{size:9},maxRotation:45},grid:{display:false}}}}
+      });
+
+      // Revenue bar chart
+      destroyChart("tc-rev");
+      charts["tc-rev"]=new Chart(document.getElementById("tc-rev"),{
+        type:"bar",
+        data:{labels:dayLabels,datasets:[
+          {label:"Projected",data:dailyProjRev,backgroundColor:"#B5D4F480",borderColor:"#0C447C",borderWidth:1,borderRadius:3},
+          {label:"Achieved",data:dailyRev,backgroundColor:"#C0DD9780",borderColor:"#27500A",borderWidth:1,borderRadius:3},
+        ]},
+        options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{labels:{font:{size:10},boxWidth:10}}},scales:{y:{beginAtZero:true,ticks:{callback:v=>"₹"+(v/1000)+"K",font:{size:9}},grid:{color:"rgba(0,0,0,0.04)"}},x:{ticks:{font:{size:9},maxRotation:45},grid:{display:false}}}}
+      });
+
+      // IDs bar
+      destroyChart("tc-ids");
+      charts["tc-ids"]=new Chart(document.getElementById("tc-ids"),{
+        type:"bar",
+        data:{labels:dayLabels,datasets:[
+          {label:"Projected IDs",data:dailyProj,backgroundColor:"#B5D4F480",borderColor:"#0C447C",borderWidth:1,borderRadius:3},
+          {label:"Converted",data:dailyConv,backgroundColor:dailyAdh.map(p=>adherenceBg(p)+"CC"),borderColor:dailyAdh.map(p=>adherenceColor(p)),borderWidth:1.5,borderRadius:3},
+        ]},
+        options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{labels:{font:{size:10},boxWidth:10}}},scales:{y:{beginAtZero:true,ticks:{font:{size:10}},grid:{color:"rgba(0,0,0,0.04)"}},x:{ticks:{font:{size:9},maxRotation:45},grid:{display:false}}}}
+      });
+
+      // Breakdown multi-line
+      destroyChart("tc-breakdown");
+      charts["tc-breakdown"]=new Chart(document.getElementById("tc-breakdown"),{
+        type:"line",
+        data:{labels:dayLabels,datasets:breakdownDatasets},
+        options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{position:"bottom",labels:{font:{size:10},boxWidth:10}}},scales:{y:{min:0,max:100,ticks:{callback:v=>v+"%",font:{size:9}},grid:{color:"rgba(0,0,0,0.04)"}},x:{ticks:{font:{size:9},maxRotation:45},grid:{display:false}}}}
+      });
+    },100);
+  }
+
+    /* ---- TEAM MANAGEMENT ---- */
+  function renderTeamMgmt() {
+    const role = currentProfile.role;
+    const tm = getTeamMap();
+    const zones = getZones();
+    const canEdit = role === "rm" || role === "tm"; // both can add/remove
+
+    // TM sees only their zone; Admin sees all
+    let relevantZones = zones;
+    if(role === "tm") {
+      relevantZones = zones.filter(z => z.tm === currentUser.email);
+    }
+
+    const zoneBlocks = relevantZones.map(zone => {
+      const tmProfile = tm[zone.tm];
+      // TM can only edit their own zone
+      const zoneEditable = role === "rm" || zone.tm === currentUser.email;
+
+      const tlRows = zone.tls.map(tlEmail => {
+        const tl = tm[tlEmail];
+        if(!tl) return "";
+        return `<div class="team-row">
+          <div class="team-avatar">${tl.name.charAt(0)}</div>
+          <div class="team-info">
+            <span class="team-name">${tl.name}</span>
+            <span class="team-email">${tlEmail}</span>
+          </div>
+          <div class="team-actions-right">
+            ${zoneEditable ? `<button class="btn-xs btn-del" onclick="removeTL('${tlEmail}','${zone.name}')">Remove</button>` : ''}
+          </div>
+        </div>`;
+      }).join("");
+
+      return `<div class="team-zone-block">
+        <div class="team-zone-header">
+          <span class="team-zone-name">${zone.name}</span>
+          <span class="team-zone-tm">TM: ${tmProfile?.name||zone.tm}</span>
+        </div>
+        <div class="team-tl-list">${tlRows||'<p style="color:#9B9990;font-size:12px;padding:8px">No TLs in this zone yet</p>'}</div>
+        ${zoneEditable ? `<button class="btn-add-tl" onclick="openAddTLModal('${zone.name}')">+ Add TL to ${zone.name}</button>` : ''}
+      </div>`;
+    }).join("");
+
+    document.getElementById("team-mgmt-content").innerHTML = `
+      <div class="team-zones">${zoneBlocks}</div>
+      ${role==="rm" ? `
+        <div class="card" style="margin-top:1rem">
+          <div class="card-title">All registered users <span style="font-size:10px;font-weight:400;color:#9B9990">RM → TM → TL hierarchy</span></div>
+          <div class="tbl-wrap"><table>
+            <thead><tr><th>Name</th><th>Email</th><th>Role</th><th>Zone</th><th>Reports To</th></tr></thead>
+            <tbody>${Object.entries(tm).map(([email,u])=>`<tr>
+              <td class="fw5">${u.name}</td>
+              <td class="mono" style="font-size:11px">${email}</td>
+              <td><span class="badge badge-${u.role}">${u.role.toUpperCase()}</span></td>
+              <td>${u.zone}</td>
+              <td>${u.tm ? tm[u.tm]?.name||u.tm : "—"}</td>
+            </tr>`).join("")}</tbody>
+          </table></div>
+        </div>` : ""}
+      ${role==="tm" ? `
+        <div style="margin-top:1rem;padding:12px 16px;background:#E6F1FB;border-radius:10px;font-size:12px;color:#0C447C">
+          💡 <strong>Note:</strong> You can add or remove TLs from your zone only. After adding a new TL, contact Pradipta to create their login in Firebase.
+        </div>` : ""}
+    `;
+  }
+
+  window.openAddTLModal = function(zoneName) {
+    document.getElementById("add-tl-zone").value = zoneName;
+    const disp = document.getElementById("add-tl-zone-display");
+    if(disp) disp.value = zoneName;
+    document.getElementById("add-tl-email").value = "";
+    document.getElementById("add-tl-name").value = "";
+    openModal("add-tl","");
+  };
+
+  window.submitAddTL = async function() {
+    const email = document.getElementById("add-tl-email").value.trim().toLowerCase();
+    const name  = document.getElementById("add-tl-name").value.trim();
+    const zoneName = document.getElementById("add-tl-zone").value;
+    if(!email||!name){showToast("Email and name required","error");return;}
+    if(!email.includes("@")){showToast("Enter a valid email","error");return;}
+
+    const tm = getTeamMap();
+    const zones = getZones();
+    const zone = zones.find(z=>z.name===zoneName);
+    if(!zone){showToast("Zone not found","error");return;}
+    if(zone.tls.includes(email)){showToast("TL already in this zone","error");return;}
+
+    // Add to team map
+    tm[email] = {name, role:"tl", tm:zone.tm, zone:zoneName};
+    zone.tls.push(email);
+    dynamicTeam = tm;
+    dynamicZones = zones;
+
+    setLoading(true);
+    await saveTeamConfig();
+    setLoading(false);
+    closeModal();
+    renderTeamMgmt();
+    showToast(`${name} added to ${zoneName}!`, "success");
+  };
+
+  window.removeTL = async function(tlEmail, zoneName) {
+    if(!confirm(`Remove ${getTeamMap()[tlEmail]?.name||tlEmail} from ${zoneName}? They will lose access.`)) return;
+    const tm = getTeamMap();
+    const zones = getZones();
+    const zone = zones.find(z=>z.name===zoneName);
+    if(zone) zone.tls = zone.tls.filter(e=>e!==tlEmail);
+    delete tm[tlEmail];
+    dynamicTeam = tm;
+    dynamicZones = zones;
+    setLoading(true);
+    await saveTeamConfig();
+    setLoading(false);
+    renderTeamMgmt();
+    showToast("TL removed from team","info");
+  };
+
+  /* ---- DATA MANAGEMENT (ADMIN ONLY) ---- */
+  let dataToDelete = [];
+
+  window.renderDataMgmt = function() {
+    document.getElementById("dm-results").innerHTML = "";
+    document.getElementById("dm-summary").innerHTML = "";
+    document.getElementById("dm-actions").style.display = "none";
+  };
+
+  window.loadDataForDate = async function() {
+    const dateVal = document.getElementById("dm-date").value;
+    if(!dateVal){showToast("Select a date","error");return;}
+    setLoading(true);
+    try {
+      const q = query(collection(db,"entries"),where("date","==",dateVal));
+      const snap = await getDocs(q);
+      dataToDelete = snap.docs.map(d=>({id:d.id,...d.data()}));
+      renderDMResults(dataToDelete,dateVal);
+    } catch(e){showToast("Load failed: "+e.message,"error");}
+    setLoading(false);
+  };
+
+  function renderDMResults(data, dateVal) {
+    const conv=data.filter(e=>e.status==="converted").length;
+    const projRev=data.reduce((a,e)=>a+e.revenue,0);
+    document.getElementById("dm-summary").innerHTML = data.length?`
+      <div class="metrics" style="margin-bottom:0">
+        <div class="metric"><div class="mlabel">Total Entries</div><div class="mval">${data.length}</div></div>
+        <div class="metric"><div class="mlabel">Converted</div><div class="mval" style="color:#27500A">${conv}</div></div>
+        <div class="metric"><div class="mlabel">Projected Revenue</div><div class="mval sm">₹${projRev.toLocaleString("en-IN")}</div></div>
+      </div>`:"<p style='color:#9B9990;font-size:13px'>No data found for this date.</p>";
+
+    if(!data.length){document.getElementById("dm-actions").style.display="none";document.getElementById("dm-results").innerHTML="";return;}
+
+    document.getElementById("dm-actions").style.display="flex";
+    document.getElementById("dm-results").innerHTML=`
+      <div style="margin:10px 0 6px;display:flex;align-items:center;gap:10px">
+        <label style="font-size:12px;color:#6B6860"><input type="checkbox" id="dm-select-all" onchange="toggleSelectAll(this.checked)"> Select all ${data.length} entries</label>
+        <span id="dm-selected-count" style="font-size:11px;color:#9B9990">0 selected</span>
+      </div>
+      <div class="tbl-wrap"><table>
+        <thead><tr><th></th><th>TL</th><th>Member ID</th><th>Name</th><th>Plan</th><th>Revenue</th><th>Status</th></tr></thead>
+        <tbody>${data.map((e,i)=>`<tr>
+          <td><input type="checkbox" class="dm-check" data-idx="${i}" onchange="updateDeleteCount()"></td>
+          <td>${e.tlName}</td><td class="mono">${e.memberId}</td><td>${e.memberName}</td>
+          <td>${e.plan}</td><td>₹${e.revenue.toLocaleString("en-IN")}</td>
+          <td><span class="status-pill ${e.status==="converted"?"s-converted":e.status==="lost"?"s-lost":"s-pending"}">${e.status}</span></td>
+        </tr>`).join("")}</tbody>
+      </table></div>`;
+  }
+
+  window.toggleSelectAll = function(checked) {
+    document.querySelectorAll(".dm-check").forEach(cb=>cb.checked=checked);
+    updateDeleteCount();
+  };
+
+  window.updateDeleteCount = function() {
+    const n = document.querySelectorAll(".dm-check:checked").length;
+    const el = document.getElementById("dm-selected-count");
+    if(el) el.textContent = n+" selected";
+  };
+
+  window.deleteSelected = async function() {
+    const checked = [...document.querySelectorAll(".dm-check:checked")];
+    if(!checked.length){showToast("No entries selected","error");return;}
+    if(!confirm(`Permanently delete ${checked.length} entries? This cannot be undone.`)) return;
+    const ids = checked.map(cb=>dataToDelete[parseInt(cb.dataset.idx)].id);
+    setLoading(true);
+    try {
+      const batch = writeBatch(db);
+      ids.forEach(id=>batch.delete(doc(db,"entries",id)));
+      await batch.commit();
+      showToast(`${ids.length} entries deleted permanently`,"info");
+      // Reload
+      const dateVal = document.getElementById("dm-date").value;
+      await loadDataForDate();
+    } catch(e){showToast("Delete failed: "+e.message,"error");}
+    setLoading(false);
+  };
+
+  window.deleteAllForDate = async function() {
+    const dateVal = document.getElementById("dm-date").value;
+    if(!dataToDelete.length){showToast("No data to delete","error");return;}
+    if(!confirm(`Delete ALL ${dataToDelete.length} entries for ${dateVal}? This cannot be undone.`)) return;
+    setLoading(true);
+    try {
+      const batch = writeBatch(db);
+      dataToDelete.forEach(e=>batch.delete(doc(db,"entries",e.id)));
+      await batch.commit();
+      dataToDelete=[];
+      document.getElementById("dm-results").innerHTML="";
+      document.getElementById("dm-summary").innerHTML="<p style='color:#27500A;font-size:13px'>✅ All entries deleted for "+dateVal+"</p>";
+      document.getElementById("dm-actions").style.display="none";
+      showToast("All entries deleted","info");
+    } catch(e){showToast("Delete failed: "+e.message,"error");}
+    setLoading(false);
+  };
+
+  /* ---- EXCEL EXPORT ---- */
+  window.exportExcel = async function(scope) {
+    setLoading(true);
+    let data=[];
+    const today=todayStr();
+
+    if(scope==="today") {
+      data=allEntries;
+      if(currentProfile.role==="tl") data=data.filter(e=>e.tlEmail===currentUser.email);
+      else if(currentProfile.role==="tm"){const z=ZONES.find(z=>z.tm===currentUser.email);if(z)data=data.filter(e=>z.tls.includes(e.tlEmail));}
+    } else if(scope==="week") {
+      data=weeklyData;
+      if(currentProfile.role==="tl") data=data.filter(e=>e.tlEmail===currentUser.email);
+      else if(currentProfile.role==="tm"){const z=ZONES.find(z=>z.tm===currentUser.email);if(z)data=data.filter(e=>z.tls.includes(e.tlEmail));}
+    }
+
+    const rows=data.map(e=>({
+      "Date": e.date, "Zone": e.zone,
+      "TM": TEAM_MAP[TEAM_MAP[e.tlEmail]?.tm]?.name||"",
+      "TL": e.tlName, "Member ID": e.memberId, "Member Name": e.memberName,
+      "Plan": e.plan, "Projected Revenue": e.revenue,
+      "Actual Revenue": e.actualRevenue||"",
+      "Slot": e.slot, "Status": statusLabel(e.status), "Remark": e.remark||"",
+    }));
+
+    const ws=XLSX.utils.json_to_sheet(rows);
+    const wb=XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb,ws,"Pipeline Data");
+
+    // Summary sheet
+    const conv=data.filter(e=>e.status==="converted");
+    const sumRows=[
+      ["Metric","Value"],
+      ["Total IDs",data.length],
+      ["Converted",conv.length],
+      ["Lost",data.filter(e=>e.status==="lost").length],
+      ["Pending",data.filter(e=>e.status==="pending").length],
+      ["Adherence %",pct(conv.length,data.length)+"%"],
+      ["Projected Revenue","₹"+data.reduce((a,e)=>a+e.revenue,0).toLocaleString("en-IN")],
+      ["Revenue Achieved","₹"+conv.reduce((a,e)=>a+(e.actualRevenue||e.revenue),0).toLocaleString("en-IN")],
+    ];
+    const ws2=XLSX.utils.aoa_to_sheet(sumRows);
+    XLSX.utils.book_append_sheet(wb,ws2,"Summary");
+
+    XLSX.writeFile(wb,`Pipeline_${currentProfile.role==="rm"?"RM":currentProfile.role.toUpperCase()}_${currentProfile.name}_${scope}_${today}.xlsx`);
+    setLoading(false);
+    showToast("Excel exported successfully!","success");
+  };
+</script>
+
+<style>
+:root{--brand:#E0440E;--brand-light:#FBE9E3;--font:'DM Sans',sans-serif;--mono:'DM Mono',monospace;--bg:#F5F4F1;--surface:#FFFFFF;--border:rgba(0,0,0,0.09);--text:#1A1814;--muted:#6B6860;--faint:#9B9990;--green:#27500A;--green-bg:#EAF3DE;--red:#A32D2D;--red-bg:#FCEBEB;--amber:#633806;--amber-bg:#FAEEDA;--blue:#0C447C;--blue-bg:#E6F1FB;--radius:10px;--radius-lg:14px;--shadow:0 1px 3px rgba(0,0,0,0.06);}
+*{box-sizing:border-box;margin:0;padding:0;}
+body{font-family:var(--font);background:var(--bg);color:var(--text);font-size:14px;min-height:100vh;}
+#loader{position:fixed;inset:0;background:rgba(255,255,255,0.75);display:flex;align-items:center;justify-content:center;z-index:999;display:none;}
+.spinner{width:28px;height:28px;border:2.5px solid var(--border);border-top-color:var(--brand);border-radius:50%;animation:spin 0.7s linear infinite;}
+@keyframes spin{to{transform:rotate(360deg);}}
+.toast{position:fixed;bottom:24px;right:24px;padding:10px 18px;border-radius:var(--radius);font-size:13px;font-weight:500;z-index:1000;opacity:0;transform:translateY(8px);transition:all 0.25s;pointer-events:none;}
+.toast.show{opacity:1;transform:translateY(0);}
+.toast-success{background:var(--green-bg);color:var(--green);border:0.5px solid #C0DD97;}
+.toast-error{background:var(--red-bg);color:var(--red);border:0.5px solid #F7C1C1;}
+.toast-info{background:var(--blue-bg);color:var(--blue);border:0.5px solid #B5D4F4;}
+/* LOGIN */
+#login-screen{min-height:100vh;display:flex;align-items:center;justify-content:center;background:var(--bg);}
+.login-card{background:var(--surface);border:0.5px solid var(--border);border-radius:var(--radius-lg);padding:2.5rem 2rem;width:360px;box-shadow:var(--shadow);}
+.login-logo{font-size:22px;font-weight:700;margin-bottom:4px;}.login-logo span{color:var(--brand);}
+.login-sub{font-size:12px;color:var(--muted);margin-bottom:2rem;}
+.login-card label{font-size:12px;color:var(--muted);display:block;margin-bottom:4px;margin-top:14px;}
+.login-card input{width:100%;padding:9px 12px;border:0.5px solid rgba(0,0,0,0.15);border-radius:var(--radius);font-family:var(--font);font-size:13px;background:var(--surface);color:var(--text);outline:none;transition:border-color 0.2s;}
+.login-card input:focus{border-color:var(--brand);}
+.btn-login{margin-top:1.5rem;width:100%;padding:10px;background:var(--brand);color:white;border:none;border-radius:var(--radius);font-family:var(--font);font-size:14px;font-weight:500;cursor:pointer;}
+.login-hint{margin-top:1.5rem;font-size:11px;color:var(--faint);line-height:1.6;padding:10px 12px;background:var(--bg);border-radius:8px;}
+/* APP SHELL */
+#app{display:none;min-height:100vh;}
+.topbar{display:flex;align-items:center;gap:10px;padding:0 1.5rem;height:56px;background:var(--surface);border-bottom:0.5px solid var(--border);position:sticky;top:0;z-index:100;flex-wrap:wrap;}
+.top-logo{font-size:15px;font-weight:700;}.top-logo span{color:var(--brand);}
+.top-user{font-size:12px;color:var(--muted);}
+.badge{font-size:10px;font-weight:700;padding:2px 8px;border-radius:20px;letter-spacing:0.04em;}
+.badge-tl{background:#EEEDFE;color:#3C3489;}.badge-tm{background:var(--green-bg);color:var(--green);}.badge-admin{background:var(--blue-bg);color:var(--blue);}
+#main-nav{display:flex;gap:4px;margin-left:auto;}
+.nav-btn{padding:6px 12px;border-radius:20px;border:0.5px solid var(--border);background:transparent;font-family:var(--font);font-size:12px;cursor:pointer;color:var(--muted);transition:all 0.15s;}
+.nav-btn.active{background:var(--text);color:white;border-color:var(--text);}
+.btn-logout{padding:6px 12px;border-radius:20px;border:0.5px solid var(--border);background:transparent;font-family:var(--font);font-size:12px;cursor:pointer;color:var(--muted);}
+.main{padding:1.5rem;max-width:1150px;margin:0 auto;}
+.section{display:none;}
+.card{background:var(--surface);border:0.5px solid var(--border);border-radius:var(--radius-lg);padding:1.25rem 1.5rem;margin-bottom:1rem;}
+.card-title{font-size:12px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:0.06em;margin-bottom:1rem;}
+/* METRICS */
+.metrics{display:grid;grid-template-columns:repeat(auto-fill,minmax(130px,1fr));gap:10px;margin-bottom:1rem;}
+.metric{background:var(--surface);border:0.5px solid var(--border);border-radius:var(--radius);padding:12px 14px;}
+.mlabel{font-size:11px;color:var(--muted);margin-bottom:4px;}.mval{font-size:22px;font-weight:700;color:var(--text);line-height:1;}.mval.sm{font-size:15px;}.msub{font-size:11px;color:var(--faint);margin-top:3px;}
+/* FORM */
+.form-grid-3{display:grid;grid-template-columns:repeat(3,1fr);gap:12px;}.form-grid-2{display:grid;grid-template-columns:1fr 1fr;gap:12px;}
+@media(max-width:600px){.form-grid-3,.form-grid-2{grid-template-columns:1fr;}}
+.form-group label{font-size:12px;color:var(--muted);display:block;margin-bottom:4px;}
+.form-group input,.form-group select{width:100%;padding:8px 11px;border:0.5px solid rgba(0,0,0,0.15);border-radius:var(--radius);font-family:var(--font);font-size:13px;background:var(--surface);color:var(--text);outline:none;transition:border-color 0.2s;}
+.form-group input:focus,.form-group select:focus{border-color:var(--brand);}
+.btn-add{margin-top:1rem;padding:9px 24px;background:var(--brand);color:white;border:none;border-radius:var(--radius);font-family:var(--font);font-size:13px;font-weight:500;cursor:pointer;}
+/* SLOTS */
+.slot-tabs{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:1rem;}
+.slot-tab{padding:5px 14px;border-radius:20px;border:0.5px solid var(--border);background:transparent;font-family:var(--font);font-size:12px;cursor:pointer;color:var(--muted);}
+.slot-tab.active{background:var(--brand-light);color:var(--brand);border-color:#F0A98A;font-weight:500;}
+.slot-label-row{display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;}
+/* TABLE */
+.tbl-wrap{overflow-x:auto;}
+table{width:100%;border-collapse:collapse;font-size:12px;}
+th{text-align:left;padding:8px 10px;color:var(--muted);font-weight:600;border-bottom:0.5px solid var(--border);white-space:nowrap;font-size:11px;text-transform:uppercase;letter-spacing:0.04em;}
+td{padding:9px 10px;border-bottom:0.5px solid var(--border);vertical-align:middle;}
+tr:last-child td{border-bottom:none;}tr:hover td{background:#FAFAF8;}
+.empty-cell{text-align:center;color:var(--faint);padding:2rem;font-size:13px;}
+.mono{font-family:var(--mono);font-size:11px;color:var(--muted);}.fw5{font-weight:500;}
+/* PILLS */
+.plan-pill{display:inline-block;padding:2px 9px;border-radius:20px;font-size:11px;font-weight:500;white-space:nowrap;}
+.slot-pill{display:inline-block;padding:2px 8px;border-radius:20px;font-size:11px;background:#F1EFE8;color:var(--muted);}
+.status-pill{display:inline-block;padding:2px 9px;border-radius:20px;font-size:11px;font-weight:500;}
+.s-pending{background:var(--amber-bg);color:var(--amber);}.s-converted{background:var(--green-bg);color:var(--green);}.s-lost{background:var(--red-bg);color:var(--red);}
+.adherence-badge{display:inline-block;padding:2px 8px;border-radius:20px;font-size:11px;font-weight:600;margin-left:8px;}
+/* ACTION BUTTONS */
+.actions{display:flex;gap:4px;flex-wrap:nowrap;}
+.btn-xs{padding:3px 9px;border-radius:6px;border:0.5px solid;font-family:var(--font);font-size:11px;cursor:pointer;white-space:nowrap;}
+.btn-conv{background:var(--green-bg);color:var(--green);border-color:#C0DD97;}
+.btn-lost{background:var(--red-bg);color:var(--red);border-color:#F7C1C1;}
+.btn-del{background:#F1EFE8;color:var(--muted);border-color:#D3D1C7;}
+/* GUIDANCE */
+.guidance-wrap{margin-bottom:1rem;}
+.guidance-note{display:flex;align-items:flex-start;gap:8px;padding:10px 14px;border-radius:var(--radius);margin-bottom:6px;font-size:13px;line-height:1.5;}
+.g-icon{font-size:15px;flex-shrink:0;}
+.guidance-success{background:var(--green-bg);color:var(--green);}
+.guidance-amber{background:var(--amber-bg);color:var(--amber);}
+.guidance-danger{background:var(--red-bg);color:var(--red);}
+.guidance-info{background:var(--blue-bg);color:var(--blue);}
+/* TL CARDS */
+.tl-card{background:var(--surface);border:0.5px solid var(--border);border-radius:var(--radius);padding:12px 14px;margin-bottom:8px;}
+.tl-card-header{display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;}
+.tl-card-name{font-size:13px;font-weight:600;}
+.tl-card-rev{font-size:13px;font-weight:600;}
+.tl-bar-row{display:flex;align-items:center;gap:10px;margin-bottom:6px;}
+.prog-bg{flex:1;height:7px;background:var(--bg);border-radius:4px;overflow:hidden;}
+.prog-fill{height:100%;border-radius:4px;transition:width 0.5s;}
+.tl-alert{font-size:11px;color:var(--amber);background:var(--amber-bg);padding:4px 10px;border-radius:6px;margin-top:4px;}
+/* ZONE CARDS */
+.zone-cards{display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:12px;margin-bottom:1rem;}
+.zone-card{background:var(--surface);border:0.5px solid var(--border);border-radius:var(--radius-lg);padding:1rem 1.25rem;}
+.zone-card-header{display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;}
+.zone-card-name{font-size:15px;font-weight:700;display:block;}
+.zone-tm-label{font-size:11px;color:var(--faint);}
+.zone-rev-row{display:flex;justify-content:space-between;align-items:center;margin-top:8px;font-size:13px;font-weight:600;}
+/* CHARTS */
+.chart-row{display:grid;grid-template-columns:1fr 1fr;gap:1rem;margin-bottom:1rem;}
+@media(max-width:700px){.chart-row{grid-template-columns:1fr;}}
+.chart-box{background:var(--surface);border:0.5px solid var(--border);border-radius:var(--radius-lg);padding:1rem 1.25rem;}
+.chart-title{font-size:12px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:0.05em;margin-bottom:0.75rem;}
+.chart-canvas-wrap{position:relative;height:200px;}
+.donut-wrap{position:relative;height:180px;max-width:220px;margin:0 auto;}
+/* TL SUMMARY ROW (weekly) */
+.tl-summary-row{display:flex;align-items:center;gap:12px;padding:10px 0;border-bottom:0.5px solid var(--border);}
+.tl-summary-row:last-child{border-bottom:none;}
+.tl-info{min-width:110px;}.tl-name{font-size:13px;font-weight:500;display:block;}.tl-sub{font-size:11px;color:var(--faint);}
+.tl-bar-wrap{display:flex;align-items:center;gap:8px;flex:1;}
+.prog-label{font-size:12px;font-weight:700;min-width:36px;}
+.tl-rev{min-width:120px;text-align:right;font-size:12px;font-weight:500;}
+/* EXPORT BAR */
+.export-bar{display:flex;gap:8px;margin-bottom:1rem;flex-wrap:wrap;}
+.btn-export{padding:7px 16px;border-radius:var(--radius);border:0.5px solid var(--border);background:var(--surface);font-family:var(--font);font-size:12px;cursor:pointer;color:var(--text);font-weight:500;display:flex;align-items:center;gap:6px;}
+.btn-export:hover{background:#EAF3DE;color:#27500A;}
+/* HISTORY */
+.h-controls{display:flex;gap:10px;align-items:flex-end;margin-bottom:1rem;}
+.h-controls input{padding:8px 12px;border:0.5px solid rgba(0,0,0,0.15);border-radius:var(--radius);font-family:var(--font);font-size:13px;background:var(--surface);color:var(--text);outline:none;}
+.btn-load{padding:8px 20px;background:var(--text);color:white;border:none;border-radius:var(--radius);font-family:var(--font);font-size:13px;cursor:pointer;}
+
+/* STATUS PILLS - postponed */
+.s-postponed{background:#E6F1FB;color:#0C447C;}
+/* HEAT PILLS */
+.heat-pill{display:inline-block;padding:2px 9px;border-radius:20px;font-size:11px;font-weight:700;white-space:nowrap;}
+/* UNPLANNED BADGE */
+.unplanned-badge{display:inline-block;margin-left:4px;padding:1px 5px;border-radius:4px;font-size:9px;font-weight:700;background:#EEEDFE;color:#3C3489;vertical-align:middle;}
+/* FORM GRID 4 */
+.form-grid-4{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;}
+@media(max-width:800px){.form-grid-4{grid-template-columns:repeat(2,1fr);}}
+@media(max-width:500px){.form-grid-4{grid-template-columns:1fr;}}
+/* POSTPONE BUTTON */
+.btn-postpone{background:#FAEEDA;color:#633806;border-color:#F0C98A;}
+/* MODAL OVERLAY */
+.modal-overlay{position:fixed;inset:0;background:rgba(0,0,0,0.55);display:none;align-items:center;justify-content:center;z-index:9999;padding:1rem;}
+.modal-box{background:#fff;border-radius:14px;padding:2rem;width:100%;max-width:440px;box-shadow:0 20px 60px rgba(0,0,0,0.25);position:relative;max-height:90vh;overflow-y:auto;}
+.modal-title{font-size:16px;font-weight:700;margin-bottom:1.25rem;display:flex;align-items:center;gap:8px;}
+.modal-close-x{position:absolute;top:1rem;right:1rem;background:none;border:none;font-size:18px;cursor:pointer;color:#9B9990;line-height:1;}
+.modal-actions{display:flex;gap:10px;margin-top:1.5rem;}
+.btn-modal-primary{flex:1;padding:10px;background:#E0440E;color:white;border:none;border-radius:10px;font-family:'DM Sans',sans-serif;font-size:13px;font-weight:600;cursor:pointer;}
+.btn-modal-cancel{padding:10px 16px;background:transparent;color:#6B6860;border:0.5px solid rgba(0,0,0,0.15);border-radius:10px;font-family:'DM Sans',sans-serif;font-size:13px;cursor:pointer;}
+.modal-date-row{display:grid;grid-template-columns:1fr 1fr;gap:10px;}
+.modal-input{width:100%;padding:9px 12px;border:0.5px solid rgba(0,0,0,0.15);border-radius:10px;font-family:'DM Sans',sans-serif;font-size:13px;outline:none;transition:border-color 0.2s;}
+.modal-input:focus{border-color:#E0440E;}
+.modal-label{font-size:12px;color:#6B6860;display:block;margin-bottom:4px;margin-top:12px;}
+/* TEAM MANAGEMENT */
+.team-zones{display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:1rem;}
+.team-zone-block{background:#fff;border:0.5px solid rgba(0,0,0,0.09);border-radius:14px;overflow:hidden;}
+.team-zone-header{display:flex;align-items:center;justify-content:space-between;padding:12px 16px;background:#F5F4F1;border-bottom:0.5px solid rgba(0,0,0,0.09);}
+.team-zone-name{font-size:14px;font-weight:700;}
+.team-zone-tm{font-size:11px;color:#9B9990;}
+.team-tl-list{padding:6px 0;}
+.team-row{display:flex;align-items:center;gap:10px;padding:10px 16px;transition:background 0.15s;}
+.team-row:hover{background:#FAFAF8;}
+.team-avatar{width:34px;height:34px;border-radius:50%;background:#FBE9E3;color:#E0440E;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:14px;flex-shrink:0;}
+.team-info{flex:1;min-width:0;}
+.team-name{font-size:13px;font-weight:600;display:block;}
+.team-email{font-size:11px;color:#9B9990;display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.team-actions-right{display:flex;gap:4px;flex-shrink:0;}
+.btn-add-tl{width:100%;padding:9px;border:none;background:transparent;color:#E0440E;font-family:'DM Sans',sans-serif;font-size:12px;font-weight:600;cursor:pointer;border-top:0.5px solid rgba(0,0,0,0.09);}
+.btn-add-tl:hover{background:#FBE9E3;}
+/* TREND CHART SECTION */
+.trend-controls{display:flex;gap:10px;align-items:flex-end;flex-wrap:wrap;margin-bottom:1rem;}
+.trend-controls input,.trend-controls select{padding:8px 12px;border:0.5px solid rgba(0,0,0,0.15);border-radius:10px;font-family:'DM Sans',sans-serif;font-size:13px;background:#fff;color:#1A1814;outline:none;}
+.btn-trend-load{padding:8px 20px;background:#1A1814;color:white;border:none;border-radius:10px;font-family:'DM Sans',sans-serif;font-size:13px;cursor:pointer;}
+</style>
+</head>
+<body>
+<div id="loader"><div class="spinner"></div></div>
+<div id="toast" class="toast"></div>
+
+<!-- LOGIN -->
+<div id="login-screen">
+  <div class="login-card">
+    <div class="login-logo">Pipeline <span>Manager</span></div>
+    <div class="login-sub">Shaadi.com — Telesales Projection System</div>
+    <div class="form-group"><label>Work Email</label><input id="l-email" type="email" placeholder="name@peopleinteractive.in" autocomplete="username"></div>
+    <div class="form-group"><label>Password</label><input id="l-pass" type="password" placeholder="••••••••" autocomplete="current-password" onkeydown="if(event.key==='Enter')doLogin()"></div>
+    <button class="btn-login" onclick="doLogin()">Sign In</button>
+    <div class="login-hint"><strong>First time?</strong> Contact Pradipta for your login credentials. Use your official email and the shared password. RM: Pradipta | TMs: Jyoti, Yash Oza, Ashutosh</div>
+  </div>
+</div>
+
+<!-- MAIN APP -->
+<div id="app">
+  <div class="topbar">
+    <div class="top-logo">Pipeline <span>Manager</span></div>
+    <span id="user-name" class="top-user"></span>
+    <span id="user-zone" class="top-user" style="color:#9B9990"></span>
+    <span id="user-badge" class="badge"></span>
+    <div id="main-nav"></div>
+    <button class="btn-logout" onclick="openModal('pw','')" style="margin-right:4px">🔑 Change Password</button><button class="btn-logout" onclick="doLogout()">Sign out</button>
+  </div>
+
+  <div class="main">
+
+    <!-- TL SECTION -->
+    <div id="section-tl" class="section">
+      <div class="card">
+        <div class="card-title">Submit projection</div>
+        <div class="slot-tabs">
+          <button class="slot-tab active" onclick="setSlot(this,'12 PM')">12 PM</button>
+          <button class="slot-tab" onclick="setSlot(this,'2 PM')">2 PM</button>
+          <button class="slot-tab" onclick="setSlot(this,'3 PM')">3 PM</button>
+          <button class="slot-tab" onclick="setSlot(this,'5 PM')">5 PM</button>
+          <button class="slot-tab" onclick="setSlot(this,'EOD')">EOD</button>
+        </div>
+        <div class="form-grid-4">
+          <div class="form-group"><label>Member ID *</label><input id="f-id" type="text" placeholder="e.g. HSH58195449"></div>
+          <div class="form-group"><label>Member Name *</label><input id="f-name" type="text" placeholder="Full name"></div>
+          <div class="form-group"><label>Plan *</label>
+            <select id="f-plan"><option value="">Select plan</option><option>VIP Lite 3</option><option>VIP Lite 6</option><option>VIP Plus 3</option><option>VIP Plus 6</option></select>
+          </div>
+          <div class="form-group"><label>Prospect Heat *</label>
+            <select id="f-heat">
+              <option value="HOT">🔥 HOT — Closing today</option>
+              <option value="WARM" selected>♨️ WARM — High interest</option>
+              <option value="COLD">❄️ COLD — Needs nurturing</option>
+            </select>
+          </div>
+        </div>
+        <div class="form-grid-2" style="margin-top:12px">
+          <div class="form-group"><label>Expected Revenue (INR) *</label><input id="f-rev" type="number" placeholder="e.g. 12000" min="0"></div>
+          <div class="form-group"><label>Remark / Follow-up Note</label><input id="f-remark" type="text" placeholder="e.g. Callback at 3pm, very interested"></div>
+        </div>
+        <div style="display:flex;gap:10px;margin-top:1rem;flex-wrap:wrap">
+          <button class="btn-add" onclick="addEntry()">+ Add to Pipeline</button>
+          <button class="btn-add" style="background:#6B6860" onclick="openModal('unplanned','')">+ Add Unplanned Case</button>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-title">Smart guidance — today</div>
+        <div id="tl-guidance" class="guidance-wrap"></div>
+      </div>
+
+      <div class="card">
+        <div class="slot-label-row">
+          <div class="card-title" style="margin:0">Today's pipeline</div>
+          <span id="slot-label" style="font-size:11px;color:var(--faint)">Slot: 12 PM</span>
+        </div>
+        <div class="metrics" id="tl-metrics"></div>
+        <div class="export-bar">
+          <button class="btn-export" onclick="exportExcel('today')">📥 Export Today (Excel)</button>
+          <button class="btn-export" onclick="exportExcel('week')">📥 Export This Week (Excel)</button>
+        </div>
+        <div class="chart-row">
+          <div class="chart-box"><div class="chart-title">Today's pipeline breakdown</div><div class="donut-wrap"><canvas id="tl-donut"></canvas></div></div>
+          <div style="flex:1"></div>
+        </div>
+        <div class="tbl-wrap">
+          <table><thead><tr><th>Member ID</th><th>Name</th><th>Plan</th><th>Heat</th><th>Proj. Rev</th><th>Actual/Next</th><th>Slot</th><th>Remark</th><th>Status</th><th>Actions</th></tr></thead>
+          <tbody id="tl-tbody"><tr><td colspan="10" class="empty-cell">Loading…</td></tr></tbody></table>
+        </div>
+      </div>
+    </div>
+
+    <!-- TM SECTION -->
+    <div id="section-tm" class="section">
+      <div class="metrics" id="tm-metrics"></div>
+      <div class="export-bar">
+        <button class="btn-export" onclick="exportExcel('today')">📥 Export Today (Excel)</button>
+        <button class="btn-export" onclick="exportExcel('week')">📥 Export This Week (Excel)</button>
+      </div>
+      <div class="chart-row">
+        <div class="chart-box" style="grid-column:1/-1"><div class="chart-title">TL-wise projection vs conversion — today</div><div class="chart-canvas-wrap"><canvas id="tm-bar"></canvas></div></div>
+      </div>
+      <div class="card">
+        <div class="card-title">TL performance signals</div>
+        <div id="tm-tl-cards"></div>
+      </div>
+      <div class="card">
+        <div class="card-title">All entries — my zone</div>
+        <div class="tbl-wrap">
+          <table><thead><tr><th>TL</th><th>Member ID</th><th>Name</th><th>Plan</th><th>Revenue</th><th>Slot</th><th>Status</th></tr></thead>
+          <tbody id="tm-tbody"><tr><td colspan="7" class="empty-cell">Loading…</td></tr></tbody></table>
+        </div>
+      </div>
+    </div>
+
+    <!-- ADMIN SECTION -->
+    <div id="section-admin" class="section">
+      <div class="metrics" id="admin-metrics"></div>
+      <div class="export-bar">
+        <button class="btn-export" onclick="exportExcel('today')">📥 Export Today (Excel)</button>
+        <button class="btn-export" onclick="exportExcel('week')">📥 Export This Week (Excel)</button>
+      </div>
+      <div class="chart-row">
+        <div class="chart-box" style="grid-column:1/-1"><div class="chart-title">Zone-wise projection vs conversion — today</div><div class="chart-canvas-wrap"><canvas id="admin-bar"></canvas></div></div>
+      </div>
+      <div class="card">
+        <div class="card-title">Zone performance — today <span style="font-size:10px;font-weight:400;color:#9B9990;margin-left:8px">RM view · all zones</span></div>
+        <div class="zone-cards" id="admin-zones"></div>
+      </div>
+      <div class="card">
+        <div class="card-title">Full pipeline — all zones</div>
+        <div class="tbl-wrap">
+          <table><thead><tr><th>Zone</th><th>TM</th><th>TL</th><th>Member ID</th><th>Name</th><th>Plan</th><th>Proj. Rev</th><th>Actual Rev</th><th>Slot</th><th>Status</th></tr></thead>
+          <tbody id="admin-tbody"><tr><td colspan="10" class="empty-cell">Loading…</td></tr></tbody></table>
+        </div>
+      </div>
+    </div>
+
+    <!-- WEEKLY SECTION -->
+    <div id="section-weekly" class="section">
+      <div class="card">
+        <div class="card-title">📅 Weekly report — current week</div>
+        <div class="metrics" id="weekly-metrics"></div>
+        <div class="export-bar">
+          <button class="btn-export" onclick="exportExcel('week')">📥 Export This Week (Excel)</button>
+        </div>
+      </div>
+      <div class="chart-row">
+        <div class="chart-box"><div class="chart-title">Daily adherence % trend</div><div class="chart-canvas-wrap"><canvas id="weekly-line"></canvas></div></div>
+        <div class="chart-box"><div class="chart-title">Daily projection vs conversion</div><div class="chart-canvas-wrap"><canvas id="weekly-bar"></canvas></div></div>
+      </div>
+      <div class="card" id="weekly-breakdown"></div>
+    </div>
+
+    <!-- HISTORY SECTION -->
+    <div id="section-history" class="section">
+      <div class="card">
+        <div class="card-title">Date-wise history</div>
+        <div class="h-controls">
+          <div class="form-group"><label>Select Date</label><input id="h-date" type="date"></div>
+          <button class="btn-load" onclick="loadHistory()">Load</button>
+        </div>
+        <div class="metrics" id="h-summary"></div>
+        <div class="tbl-wrap">
+          <table><thead><tr><th>Zone</th><th>TM</th><th>TL</th><th>Member ID</th><th>Name</th><th>Plan</th><th>Proj. Rev</th><th>Actual Rev</th><th>Slot</th><th>Status</th></tr></thead>
+          <tbody id="h-tbody"><tr><td colspan="10" class="empty-cell">Select a date and click Load</td></tr></tbody></table>
+        </div>
+      </div>
+    </div>
+
+
+    <!-- TRENDS SECTION -->
+    <div id="section-trends" class="section">
+      <div class="card">
+        <div class="card-title">📈 Achievement trend analysis</div>
+        <div class="trend-controls">
+          <div class="form-group"><label>From Date</label><input type="date" id="tr-from"></div>
+          <div class="form-group"><label>To Date</label><input type="date" id="tr-to"></div>
+          <div class="form-group"><label>Group by</label>
+            <select id="tr-group" class="trend-controls">
+              <option value="day">Day</option>
+              <option value="week">Week</option>
+            </select>
+          </div>
+          <button class="btn-trend-load" onclick="loadTrends()">Generate Trends</button>
+          <button class="btn-export" onclick="exportExcel('trend')" style="align-self:flex-end">📥 Export</button>
+        </div>
+        <p id="trend-status" style="color:#9B9990;font-size:13px"></p>
+        <div class="metrics" id="trend-summary-metrics"></div>
+      </div>
+      <div id="trend-chart-area"></div>
+    </div>
+
+    <!-- TEAM MANAGEMENT SECTION -->
+    <div id="section-team-mgmt" class="section">
+      <div class="card">
+        <div class="card-title">👥 Team Management</div>
+        <p style="font-size:13px;color:#6B6860;margin-bottom:1rem">Add or remove Team Leaders from zones. You are the Reporting Manager (RM) with full visibility across all zones and TMs.</p>
+        <div id="team-mgmt-content"><p style="color:#9B9990;font-size:13px">Loading team...</p></div>
+      </div>
+    </div>
+
+    <!-- DATA MANAGEMENT SECTION (ADMIN ONLY) -->
+    <div id="section-data-mgmt" class="section">
+      <div class="card">
+        <div class="card-title">🗑️ Data Management — RM Only</div>
+        <p style="font-size:13px;color:#A32D2D;margin-bottom:1rem">⚠️ Deleted entries are permanently removed and cannot be recovered.</p>
+        <div class="h-controls">
+          <div class="form-group"><label>Select Date to Review</label><input id="dm-date" type="date"></div>
+          <button class="btn-load" onclick="loadDataForDate()">Load Entries</button>
+        </div>
+        <div id="dm-summary" style="margin:1rem 0"></div>
+        <div id="dm-results"></div>
+        <div id="dm-actions" style="display:none;gap:10px;margin-top:1rem;flex-wrap:wrap">
+          <button class="btn-xs btn-lost" style="padding:8px 16px;font-size:13px" onclick="deleteSelected()">🗑️ Delete Selected</button>
+          <button class="btn-xs" style="padding:8px 16px;font-size:13px;background:#FCEBEB;color:#A32D2D;border:0.5px solid #F7C1C1;border-radius:6px;cursor:pointer" onclick="deleteAllForDate()">⚠️ Delete All for This Date</button>
+        </div>
+      </div>
+    </div>
+
+  </div>
+</div>
+
+<!-- MODALS -->
+<div class="modal-overlay" id="modal-overlay" onclick="if(event.target===this)closeModal()">
+
+  <!-- Convert Modal -->
+  <div class="modal-box" id="modal-convert" style="display:none">
+    <button class="modal-close-x" onclick="closeModal()">✕</button>
+    <div class="modal-title">✅ Mark as Converted</div>
+    <label class="modal-label">Actual Revenue Achieved (INR) *</label>
+    <input class="modal-input" id="m-actual-rev" type="number" placeholder="e.g. 18000" min="0">
+    <div class="modal-actions">
+      <button class="btn-modal-cancel" onclick="closeModal()">Cancel</button>
+      <button class="btn-modal-primary" onclick="submitConvert()">✅ Confirm Conversion</button>
+    </div>
+  </div>
+
+  <!-- Postpone Modal -->
+  <div class="modal-box" id="modal-postpone" style="display:none">
+    <button class="modal-close-x" onclick="closeModal()">✕</button>
+    <div class="modal-title">⏱ Postpone Case</div>
+    <div class="modal-date-row">
+      <div><label class="modal-label">Follow-up Date *</label><input class="modal-input" id="m-postpone-date" type="date"></div>
+      <div><label class="modal-label">Follow-up Time *</label><input class="modal-input" id="m-postpone-time" type="time"></div>
+    </div>
+    <label class="modal-label">Reason for postponement</label>
+    <input class="modal-input" id="m-postpone-note" type="text" placeholder="e.g. Member asked to call back tomorrow">
+    <div class="modal-actions">
+      <button class="btn-modal-cancel" onclick="closeModal()">Cancel</button>
+      <button class="btn-modal-primary" style="background:#854F0B" onclick="submitPostpone()">⏱ Confirm Postpone</button>
+    </div>
+  </div>
+
+  <!-- Unplanned Case Modal -->
+  <div class="modal-box" id="modal-unplanned" style="display:none">
+    <button class="modal-close-x" onclick="closeModal()">✕</button>
+    <div class="modal-title">⚡ Add Unplanned Case</div>
+    <p style="font-size:12px;color:#6B6860;margin-bottom:1rem;line-height:1.5">This case was not in your projection but came through today. It will be tracked with a <strong>NEW</strong> badge.</p>
+    <label class="modal-label">Member ID *</label>
+    <input class="modal-input" id="m-unplanned-id" type="text" placeholder="e.g. HSH58195449">
+    <label class="modal-label">Member Name *</label>
+    <input class="modal-input" id="m-unplanned-name" type="text" placeholder="Full name">
+    <div class="modal-date-row">
+      <div><label class="modal-label">Plan *</label>
+        <select class="modal-input" id="m-unplanned-plan">
+          <option value="">Select plan</option>
+          <option>VIP Lite 3</option><option>VIP Lite 6</option>
+          <option>VIP Plus 3</option><option>VIP Plus 6</option>
+        </select>
+      </div>
+      <div><label class="modal-label">Expected Revenue *</label>
+        <input class="modal-input" id="m-unplanned-rev" type="number" placeholder="e.g. 12000">
+      </div>
+    </div>
+    <label class="modal-label">Remark</label>
+    <input class="modal-input" id="m-unplanned-remark" type="text" placeholder="How did this case come through?">
+    <div class="modal-actions">
+      <button class="btn-modal-cancel" onclick="closeModal()">Cancel</button>
+      <button class="btn-modal-primary" style="background:#3C3489" onclick="submitUnplanned()">⚡ Add Case</button>
+    </div>
+  </div>
+
+  <!-- Password Change Modal -->
+  <div class="modal-box" id="modal-pw" style="display:none">
+    <button class="modal-close-x" onclick="closeModal()">✕</button>
+    <div class="modal-title">🔑 Change Password</div>
+    <label class="modal-label">Current Password *</label>
+    <input class="modal-input" id="m-pw-current" type="password" placeholder="Your current password">
+    <label class="modal-label">New Password *</label>
+    <input class="modal-input" id="m-pw-new" type="password" placeholder="Minimum 8 characters">
+    <label class="modal-label">Confirm New Password *</label>
+    <input class="modal-input" id="m-pw-confirm" type="password" placeholder="Repeat new password">
+    <p style="font-size:11px;color:#9B9990;margin-top:10px;line-height:1.5">After changing, you will be signed out and need to sign in again with your new password.</p>
+    <div class="modal-actions">
+      <button class="btn-modal-cancel" onclick="closeModal()">Cancel</button>
+      <button class="btn-modal-primary" onclick="submitPasswordChange()">🔑 Update Password</button>
+    </div>
+  </div>
+
+  <!-- Add TL Modal -->
+  <div class="modal-box" id="modal-add-tl" style="display:none">
+    <button class="modal-close-x" onclick="closeModal()">✕</button>
+    <div class="modal-title">➕ Add Team Leader</div>
+    <input type="hidden" id="add-tl-zone">
+    <label class="modal-label">Zone</label>
+    <input class="modal-input" id="add-tl-zone-display" type="text" readonly style="background:#F5F4F1;color:#6B6860">
+    <label class="modal-label">Work Email *</label>
+    <input class="modal-input" id="add-tl-email" type="email" placeholder="name@peopleinteractive.in">
+    <label class="modal-label">Full Name *</label>
+    <input class="modal-input" id="add-tl-name" type="text" placeholder="e.g. Priya Sharma">
+    <p style="font-size:11px;color:#9B9990;margin-top:12px;line-height:1.5;background:#F5F4F1;padding:8px 10px;border-radius:8px">📋 <strong>After adding:</strong> Go to Firebase Console → Authentication → Add user with this same email and password <strong>Pipeline@2024</strong>. Then share credentials with the TL.</p>
+    <div class="modal-actions">
+      <button class="btn-modal-cancel" onclick="closeModal()">Cancel</button>
+      <button class="btn-modal-primary" onclick="submitAddTL()">➕ Add TL</button>
+    </div>
+  </div>
+
+</div>
+
+
+</body>
