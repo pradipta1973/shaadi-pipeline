@@ -672,6 +672,7 @@
     const pTime = document.getElementById("m-postpone-time").value;
     const pNote = document.getElementById("m-postpone-note").value.trim();
     if(!pDate||!pTime) { showToast("Please select date and time","error"); return; }
+    if(!pNote) { showToast("Please enter a reason for postponement","error"); return; }
     setLoading(true);
     try {
       const entry = allEntries.find(e=>e.id===id) || weeklyData.find(e=>e.id===id);
@@ -1094,7 +1095,7 @@
         <td><span class="status-pill ${statusClass(e.status)}">${statusLabel(e.status)}</span></td>
         <td class="actions">
           ${e.status==="pending"?`<button class="btn-xs btn-conv" onclick="markStatus('${e.id}','converted')">✓ Convert</button><button class="btn-xs btn-lost" onclick="markStatus('${e.id}','lost')">✗ Lost</button><button class="btn-xs btn-postpone" onclick="markStatus('${e.id}','postponed')">⏱</button>`:""}
-          ${e.status==="postponed"?`<button class="btn-xs btn-conv" onclick="markStatus('${e.id}','converted')">✓ Convert</button>`:""}
+          ${e.status==="postponed"?`<button class="btn-xs btn-conv" onclick="markStatus('${e.id}','converted')">✓ Convert</button><button class="btn-xs btn-lost" onclick="markStatus('${e.id}','lost')">✗ Lost</button><button class="btn-xs btn-postpone" onclick="markStatus('${e.id}','postponed')">⏱ Postpone</button>`:""}
           ${e.status==="lost"?`<button class="btn-xs" style="background:#EAF3DE;color:#27500A;border-color:#C0DD97" onclick="reopenCase('${e.id}')">↺ Re-open</button>`:""}
           ${canEdit?`<button class="btn-xs btn-del" onclick="deleteEntry('${e.id}','${e.submittedSlot}')">Delete</button>`:""}
         </td>
@@ -3950,7 +3951,7 @@ tr:hover td { background: var(--surface-2); }
     <button class="modal-close" onclick="closeModal('lost')">✕</button>
     <div class="modal-icon modal-icon-red">✕</div>
     <div class="modal-title">Mark as Lost</div>
-    <div class="modal-subtitle">Select the primary reason to help improve future conversions.</div>
+    <div class="modal-subtitle">Mark as Lost only if this member is not likely to convert in the near future. Select the primary reason.</div>
     <div class="modal-field">
       <label>Reason *</label>
       <select id="m-lost-reason" onchange="toggleLostOther(this.value)">
@@ -3994,7 +3995,7 @@ tr:hover td { background: var(--surface-2); }
       </div>
     </div>
     <div class="modal-field" style="margin-top:14px">
-      <label>Reason for postponement</label>
+      <label>Reason for postponement *</label>
       <input id="m-postpone-note" type="text" placeholder="e.g. Member asked to call back tomorrow">
     </div>
     <div class="modal-actions">
