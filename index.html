@@ -543,6 +543,8 @@
     if (!mid||!mname||!plan) { showToast("Member ID, Name and Plan are required","error"); return; }
     if (!paName) { showToast("Please select a PA / Calling Agent","error"); return; }
     if (rev<=0) { showToast("Please enter expected revenue","error"); return; }
+    if (rev<12000) { showToast("Minimum revenue is ₹12,000","error"); return; }
+    if (rev>100000) { showToast("Maximum revenue is ₹1,00,000","error"); return; }
 
     const exists = allEntries.find(e=>e.memberId===mid&&e.tlEmail===currentUser.email&&e.date===todayStr());
     if (exists) { showToast("This Member ID is already in today's pipeline","error"); return; }
@@ -580,6 +582,8 @@
     const remark=document.getElementById("tm-f-remark").value.trim();
     if(!mid||!mname||!plan){showToast("Member ID, Name and Plan are required","error");return;}
     if(rev<=0){showToast("Please enter expected revenue","error");return;}
+    if(rev<12000){showToast("Minimum revenue is ₹12,000","error");return;}
+    if(rev>100000){showToast("Maximum revenue is ₹1,00,000","error");return;}
     const exists=allEntries.find(e=>e.memberId===mid&&e.tlEmail===currentUser.email&&e.date===todayStr());
     if(exists){showToast("This Member ID is already in today's pipeline","error");return;}
     setLoading(true);
@@ -617,6 +621,8 @@
     const remark= document.getElementById("abtl-f-remark").value.trim();
     if(!mid||!mname||!plan){showToast("Member ID, Name and Plan are required","error");return;}
     if(rev<=0){showToast("Please enter expected revenue","error");return;}
+    if(rev<12000){showToast("Minimum revenue is ₹12,000","error");return;}
+    if(rev>100000){showToast("Maximum revenue is ₹1,00,000","error");return;}
     const exists = allEntries.find(e=>e.memberId===mid&&e.tlEmail===tlEmail&&e.date===todayStr());
     if(exists){showToast("This Member ID already exists under "+tlProfile.name+"'s pipeline today","error");return;}
     setLoading(true);
@@ -668,6 +674,8 @@
     const actualRev = parseInt(document.getElementById("m-actual-rev").value)||0;
     const planSold = (document.getElementById("m-convert-plan")||{}).value||"";
     if (!actualRev) { showToast("Please enter actual revenue","error"); return; }
+    if (actualRev<12000) { showToast("Minimum revenue is ₹12,000","error"); return; }
+    if (actualRev>100000) { showToast("Maximum revenue is ₹1,00,000","error"); return; }
     if (!planSold) { showToast("Please select the plan that was sold","error"); return; }
     setLoading(true);
     try {
@@ -741,6 +749,8 @@
     if (!mid||!mname||!plan)     { showToast("Member ID, Name and Plan are required","error"); return; }
     if (!paName)                  { showToast("Please select a PA / Calling Agent","error"); return; }
     if (rev <= 0)                 { showToast("Please enter expected revenue","error"); return; }
+    if (rev < 12000)              { showToast("Minimum revenue is ₹12,000","error"); return; }
+    if (rev > 100000)             { showToast("Maximum revenue is ₹1,00,000","error"); return; }
     setLoading(true);
     try {
       await addDoc(collection(db,"entries"),{
@@ -4378,7 +4388,11 @@ window.submitTMUnplanned = async function() {
   const isConv = tmUnplMode === "converted";
   if (!mid||!mname||!plan) { showToast("Member ID, Name and Plan are required","error"); return; }
   if (rev <= 0)             { showToast("Please enter revenue","error"); return; }
+  if (rev < 12000)          { showToast("Minimum revenue is ₹12,000","error"); return; }
+  if (rev > 100000)         { showToast("Maximum revenue is ₹1,00,000","error"); return; }
   if (isConv && actual<=0)  { showToast("Please enter actual revenue collected","error"); return; }
+  if (isConv && actual<12000)  { showToast("Minimum actual revenue is ₹12,000","error"); return; }
+  if (isConv && actual>100000) { showToast("Maximum actual revenue is ₹1,00,000","error"); return; }
   const exists = allEntries.find(e=>e.memberId===mid&&e.tlEmail===currentUser.email&&e.date===todayStr());
   if (exists)               { showToast("This Member ID is already in today's pipeline","error"); return; }
   setLoading(true);
