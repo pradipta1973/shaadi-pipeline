@@ -40,8 +40,8 @@
     "pradipta.b@peopleinteractive.in": { name: "Pradipta", role: "rm", zone: "All" },
     "bumba.bhattacharyya@gmail.com":    { name: "Pradipta", role: "rm", zone: "All" },
     "demo.rm@gmail.com":                { name: "Demo RM",  role: "rm", zone: "All" },
-    "demo.tm@gmail.com":                { name: "Demo TM",  role: "tm", zone: "Demo", hasDirectReports: true },
-    "demo.tl@gmail.com":               { name: "Demo TL",  role: "tl", tm: "demo.tm@gmail.com", zone: "Demo" },
+    "demo.tm@gmail.com":                { name: "Demo TM",  role: "tm", zone: "East", hasDirectReports: true },
+    "demo.tl@gmail.com":               { name: "Demo TL",  role: "tl", tm: "demo.tm@gmail.com", zone: "East" },
     "jyoti.d@peopleinteractive.in":    { name: "Jyoti",    role: "tm", zone: "East", hasDirectReports: true },
     "yash.o@peopleinteractive.in":     { name: "Yash Oza", role: "tm", zone: "West AHM", hasDirectReports: true },
     "ashutosh.sha@peopleinteractive.in": { name: "Ashutosh", role: "tm", zone: "West Thane", hasDirectReports: true },
@@ -62,18 +62,19 @@
 
   const ZONES = [
     { name: "East", tm: "jyoti.d@peopleinteractive.in",
-      tls: ["puja.pandey@peopleinteractive.in","taukir.a@peopleinteractive.in","supratik.p@peopleinteractive.in","tanu.p@peopleinteractive.in","jhuma.d@peopleinteractive.in"] },
+      // demo.tl added so Demo TL can submit projections and appear in zone data
+      tls: ["puja.pandey@peopleinteractive.in","taukir.a@peopleinteractive.in","supratik.p@peopleinteractive.in","tanu.p@peopleinteractive.in","jhuma.d@peopleinteractive.in","demo.tl@gmail.com"] },
     { name: "West AHM", tm: "yash.o@peopleinteractive.in",
       tls: ["yash.purohit@peopleinteractive.in","yogesh.yadav@peopleinteractive.in","mili.k@peopleinteractive.in"] },
     { name: "West Thane", tm: "ashutosh.sha@peopleinteractive.in",
       tls: ["somnath.p@peopleinteractive.in","roshan.s@peopleinteractive.in","nayana.p@peopleinteractive.in","naisha.k@peopleinteractive.in","venkatesh.y@peopleinteractive.in"] },
-    // Demo zone — fully isolated, only visible to demo accounts
-    { name: "Demo", tm: "demo.tm@gmail.com", tls: ["demo.tl@gmail.com"] },
   ];
-  // Demo TM alias map — intentionally EMPTY now.
-  // Demo TM has their own isolated "Demo" zone and should NOT see real East data.
-  const DEMO_TM_ALIAS = {};
-
+  // Demo TM alias map — maps demo TM emails to the real zone TM email they shadow
+  // Used by getMyZone() so demo.tm can see the East zone data
+  const DEMO_TM_ALIAS = {
+    "demo.tm@gmail.com": "jyoti.d@peopleinteractive.in",
+  };
+  // Note: DEMO_TM_ALIAS is intentionally kept and consumed by getMyZone()
 
   const PLAN_BG   = { "VIP Lite 3": "#E6F1FB", "VIP Lite 6": "#EAF3DE", "VIP Plus 3": "#FAEEDA", "VIP Plus 6": "#EEEDFE" };
   const PLAN_TEXT = { "VIP Lite 3": "#0C447C", "VIP Lite 6": "#27500A", "VIP Plus 3": "#633806", "VIP Plus 6": "#3C3489" };
@@ -81,20 +82,6 @@
   let dynamicTeam = null, dynamicZones = null;
   function getTeamMap() { return dynamicTeam || TEAM_MAP; }
   function getZones() { return dynamicZones || ZONES; }
-
-  // Demo account emails — these users are fully isolated from real data
-  const DEMO_EMAILS = new Set(["demo.rm@gmail.com","demo.tm@gmail.com","demo.tl@gmail.com"]);
-
-  // Returns zones visible to the current user:
-  //   - Demo users → only the "Demo" zone
-  //   - Real users → all zones EXCEPT "Demo"
-  function getVisibleZones() {
-    const all = getZones();
-    if (!currentUser) return all;
-    return DEMO_EMAILS.has(currentUser.email)
-      ? all.filter(z => z.name === "Demo")
-      : all.filter(z => z.name !== "Demo");
-  }
 
   async function loadDynamicTeam() {
     try {
@@ -107,31 +94,24 @@
     } catch(e) { console.log("Using static team config"); }
 
     // Always ensure demo users are present, even if Firestore team_config
-    // was saved before they were added.
-    // Demo users live in their own isolated "Demo" zone — never in real zones.
+    // was saved before they were added — Firestore version would otherwise
+    // override the static ZONES/TEAM_MAP and make demo accounts invisible.
     const DEMO_USERS = {
       "demo.rm@gmail.com": { name:"Demo RM",  role:"rm", zone:"All" },
-      "demo.tm@gmail.com": { name:"Demo TM",  role:"tm", zone:"Demo", hasDirectReports: true },
-      "demo.tl@gmail.com": { name:"Demo TL",  role:"tl", tm:"demo.tm@gmail.com", zone:"Demo" },
+      "demo.tm@gmail.com": { name:"Demo TM",  role:"tm", zone:"East", hasDirectReports: true },
+      "demo.tl@gmail.com": { name:"Demo TL",  role:"tl", tm:"demo.tm@gmail.com", zone:"East" },
     };
-    // Merge into teamMap (if using Firestore config)
+    // Merge into teamMap
     if (dynamicTeam) {
       Object.entries(DEMO_USERS).forEach(([email, profile]) => {
         dynamicTeam[email] = profile;
       });
     }
-    // Ensure Demo zone exists in dynamicZones with only demo.tl
-    // Never add demo.tl to East or any real zone
+    // Ensure demo.tl is in East tls, and demo.tm alias works via DEMO_TM_ALIAS
     if (dynamicZones) {
-      // Remove demo.tl from any real zone it may have been added to previously
-      dynamicZones.forEach(z => {
-        if (z.name !== "Demo") {
-          z.tls = z.tls.filter(e => e !== "demo.tl@gmail.com");
-        }
-      });
-      // Ensure Demo zone exists
-      if (!dynamicZones.find(z => z.name === "Demo")) {
-        dynamicZones.push({ name: "Demo", tm: "demo.tm@gmail.com", tls: ["demo.tl@gmail.com"] });
+      const eastZone = dynamicZones.find(z => z.name === "East");
+      if (eastZone && !eastZone.tls.includes("demo.tl@gmail.com")) {
+        eastZone.tls.push("demo.tl@gmail.com");
       }
     }
   }
@@ -273,23 +253,6 @@
       document.getElementById("user-zone").textContent = currentProfile.zone;
       const b = document.getElementById("user-badge");
       b.textContent = currentProfile.role.toUpperCase(); b.className = "badge badge-"+currentProfile.role;
-      // ── Bridge Firebase refs to window for Daily Track module ──
-      window.__dt_db = db;
-      window.__dt_user = currentUser;
-      window.__dt_profile = currentProfile;
-      window.__dt_role = currentProfile.role;
-      window.__dt_getTeamMap = getTeamMap;
-      window.__dt_getZones = getVisibleZones;   // Daily Track always uses visible zones
-      window.__dt_demoAlias = DEMO_TM_ALIAS;
-      window.__dt_demoEmails = DEMO_EMAILS;
-      window.__dt_currentEmail = currentUser.email;
-      window.__dt_serverTimestamp = serverTimestamp;
-      window.__dt_doc = doc;
-      window.__dt_getDoc = getDoc;
-      window.__dt_setDoc = setDoc;
-      window.__dt_updateDoc = updateDoc;
-      window.__dt_firestore = { getDocs, collection, query, where };
-      // ──────────────────────────────────────────────────────────
       setupNav(); subscribeEntries(); loadWeeklyData(); loadMTDData(); loadPastData();
       if (currentProfile.role==="tl") setTimeout(loadPAList, 100);
       if (currentProfile.role==="rm"||currentProfile.role==="tm") loadTargets();
@@ -404,19 +367,45 @@
     const role = currentProfile.role;
     const nav = document.getElementById("main-nav");
     if (role==="tl") {
-      nav.innerHTML=`<button class="nav-btn active" data-section="tl">📋 My Pipeline</button><button class="nav-btn" data-section="weekly">📅 Weekly</button><button class="nav-btn" data-section="daily-track">📈 Daily Track</button>`;
+      nav.innerHTML=`<button class="nav-btn active" data-section="tl">📋 My Pipeline</button><button class="nav-btn" data-section="weekly">📅 Weekly</button>`;
     } else if (role==="tm") {
       const hasDirect = currentProfile.hasDirectReports;
-      nav.innerHTML=`<button class="nav-btn active" data-section="tm">📊 Zone Dashboard</button>${hasDirect?'<button class="nav-btn" data-section="tm-direct">📋 My Direct Pipeline</button>':''}<button class="nav-btn" data-section="weekly">📅 Weekly</button><button class="nav-btn" data-section="analytics">📊 Analytics</button><button class="nav-btn" data-section="leaderboard">🏆 Leaderboard</button><button class="nav-btn" data-section="history">📆 History</button><button class="nav-btn" data-section="daily-track">📈 Daily Track</button><button class="nav-btn" data-section="team-mgmt">👥 My Team</button>`;
+      nav.innerHTML=`<button class="nav-btn active" data-section="tm">📊 Zone Dashboard</button>${hasDirect?'<button class="nav-btn" data-section="tm-direct">📋 My Direct Pipeline</button>':''}<button class="nav-btn" data-section="weekly">📅 Weekly</button><button class="nav-btn" data-section="analytics">📊 Analytics</button><button class="nav-btn" data-section="leaderboard">🏆 Leaderboard</button><button class="nav-btn" data-section="history">📆 History</button><button class="nav-btn" data-section="team-mgmt">👥 My Team</button>`;
     } else {
-      nav.innerHTML=`<button class="nav-btn active" data-section="admin">🌐 Overview</button><button class="nav-btn" data-section="weekly">📅 Weekly</button><button class="nav-btn" data-section="analytics">📊 Analytics</button><button class="nav-btn" data-section="leaderboard">🏆 Leaderboard</button><button class="nav-btn" data-section="targets">🎯 Targets</button><button class="nav-btn" data-section="history">📆 History</button><button class="nav-btn" data-section="daily-track">📈 Daily Track</button><button class="nav-btn" data-section="team-mgmt">👥 Team</button><button class="nav-btn" data-section="data-mgmt">🗑️ Data</button>`;
+      nav.innerHTML=`
+        <button class="nav-btn active" data-section="admin">Today</button>
+        <button class="nav-btn" data-section="performance-hub">Performance</button>
+        <button class="nav-btn" data-section="planning-hub">Planning</button>
+        <div class="nav-more-wrap">
+          <button class="nav-btn nav-more-btn" id="nav-more-btn">Admin ▾</button>
+          <div class="nav-more-dropdown" id="nav-more-dropdown">
+            <button class="nav-dropdown-item" data-section="team-mgmt">👥 Team Config</button>
+            <button class="nav-dropdown-item" data-section="data-mgmt">🗑️ Data Management</button>
+          </div>
+        </div>`;
     }
-    nav.querySelectorAll(".nav-btn").forEach(btn => {
+    nav.querySelectorAll(".nav-btn:not(.nav-more-btn)").forEach(btn => {
       btn.addEventListener("click",()=>{
         nav.querySelectorAll(".nav-btn").forEach(b=>b.classList.remove("active"));
         btn.classList.add("active"); showSection(btn.dataset.section);
+        const dd=document.getElementById("nav-more-dropdown");
+        if(dd) dd.classList.remove("open");
       });
     });
+    const moreBtn=document.getElementById("nav-more-btn");
+    const moreDd=document.getElementById("nav-more-dropdown");
+    if(moreBtn&&moreDd){
+      moreBtn.addEventListener("click",(e)=>{e.stopPropagation();moreDd.classList.toggle("open");});
+      document.addEventListener("click",()=>moreDd.classList.remove("open"));
+      moreDd.querySelectorAll(".nav-dropdown-item").forEach(item=>{
+        item.addEventListener("click",()=>{
+          nav.querySelectorAll(".nav-btn").forEach(b=>b.classList.remove("active"));
+          moreBtn.classList.add("active");
+          showSection(item.dataset.section);
+          moreDd.classList.remove("open");
+        });
+      });
+    }
     showSection(role==="rm"||role==="admin"?"admin":role==="tm"?"tm":"tl");
   }
 
@@ -433,18 +422,19 @@
   }
 
   function renderSection(s) {
-    if(s==="tl")         renderTL();
-    if(s==="tm")         renderTM();
-    if(s==="tm-direct")  renderTMDirect();
-    if(s==="admin")      renderAdmin();
-    if(s==="weekly")     renderWeekly();
-    if(s==="history")    renderHistory();
-    if(s==="team-mgmt")  renderTeamMgmt();
-    if(s==="data-mgmt")  renderDataMgmt();
-    if(s==="targets")    renderTargets();
-    if(s==="leaderboard")renderLeaderboardSection();
-    if(s==="analytics")  renderAnalytics();
-    if(s==="daily-track")renderDailyTrack();
+    if(s==="tl")             renderTL();
+    if(s==="tm")             renderTM();
+    if(s==="tm-direct")      renderTMDirect();
+    if(s==="admin")          renderAdmin();
+    if(s==="weekly")         renderWeekly();
+    if(s==="history")        renderHistory();
+    if(s==="team-mgmt")      renderTeamMgmt();
+    if(s==="data-mgmt")      renderDataMgmt();
+    if(s==="targets")        renderTargets();
+    if(s==="leaderboard")    renderLeaderboardSection();
+    if(s==="analytics")      renderAnalytics();
+    if(s==="performance-hub")renderPerformanceHub();
+    if(s==="planning-hub")   renderPlanningHub();
   }
 
   window.setSlot = function(el, slot) {
@@ -543,8 +533,6 @@
     if (!mid||!mname||!plan) { showToast("Member ID, Name and Plan are required","error"); return; }
     if (!paName) { showToast("Please select a PA / Calling Agent","error"); return; }
     if (rev<=0) { showToast("Please enter expected revenue","error"); return; }
-    if (rev<12000) { showToast("Minimum revenue is ₹12,000","error"); return; }
-    if (rev>100000) { showToast("Maximum revenue is ₹1,00,000","error"); return; }
 
     const exists = allEntries.find(e=>e.memberId===mid&&e.tlEmail===currentUser.email&&e.date===todayStr());
     if (exists) { showToast("This Member ID is already in today's pipeline","error"); return; }
@@ -582,8 +570,6 @@
     const remark=document.getElementById("tm-f-remark").value.trim();
     if(!mid||!mname||!plan){showToast("Member ID, Name and Plan are required","error");return;}
     if(rev<=0){showToast("Please enter expected revenue","error");return;}
-    if(rev<12000){showToast("Minimum revenue is ₹12,000","error");return;}
-    if(rev>100000){showToast("Maximum revenue is ₹1,00,000","error");return;}
     const exists=allEntries.find(e=>e.memberId===mid&&e.tlEmail===currentUser.email&&e.date===todayStr());
     if(exists){showToast("This Member ID is already in today's pipeline","error");return;}
     setLoading(true);
@@ -621,8 +607,6 @@
     const remark= document.getElementById("abtl-f-remark").value.trim();
     if(!mid||!mname||!plan){showToast("Member ID, Name and Plan are required","error");return;}
     if(rev<=0){showToast("Please enter expected revenue","error");return;}
-    if(rev<12000){showToast("Minimum revenue is ₹12,000","error");return;}
-    if(rev>100000){showToast("Maximum revenue is ₹1,00,000","error");return;}
     const exists = allEntries.find(e=>e.memberId===mid&&e.tlEmail===tlEmail&&e.date===todayStr());
     if(exists){showToast("This Member ID already exists under "+tlProfile.name+"'s pipeline today","error");return;}
     setLoading(true);
@@ -674,8 +658,6 @@
     const actualRev = parseInt(document.getElementById("m-actual-rev").value)||0;
     const planSold = (document.getElementById("m-convert-plan")||{}).value||"";
     if (!actualRev) { showToast("Please enter actual revenue","error"); return; }
-    if (actualRev<12000) { showToast("Minimum revenue is ₹12,000","error"); return; }
-    if (actualRev>100000) { showToast("Maximum revenue is ₹1,00,000","error"); return; }
     if (!planSold) { showToast("Please select the plan that was sold","error"); return; }
     setLoading(true);
     try {
@@ -749,8 +731,6 @@
     if (!mid||!mname||!plan)     { showToast("Member ID, Name and Plan are required","error"); return; }
     if (!paName)                  { showToast("Please select a PA / Calling Agent","error"); return; }
     if (rev <= 0)                 { showToast("Please enter expected revenue","error"); return; }
-    if (rev < 12000)              { showToast("Minimum revenue is ₹12,000","error"); return; }
-    if (rev > 100000)             { showToast("Maximum revenue is ₹1,00,000","error"); return; }
     setLoading(true);
     try {
       await addDoc(collection(db,"entries"),{
@@ -1557,20 +1537,57 @@
     const projRev=allEntries.reduce((a,e)=>a+e.revenue,0);
     const achRev=conv.reduce((a,e)=>a+(e.actualRevenue||e.revenue),0);
     const p=pct(conv.length,total);
+    const pending=total-conv.length-lost.length;
+
+    // ── Hero KPIs (3 primary metrics — most important) ──
+    const heroEl=document.getElementById("admin-hero-kpis");
+    if(heroEl){
+      // Revenue vs target
+      const totalDailyTarget=ZONES.reduce((a,z)=>{const t=targetsData[z.name]||{};return a+(t.daily||0);},0);
+      const revPct=totalDailyTarget?Math.min(100,Math.round(achRev/totalDailyTarget*100)):null;
+      const revCol=revPct==null?"var(--blue)":revPct>=90?"var(--green)":revPct>=70?"var(--amber)":"var(--red)";
+      const revBg=revPct==null?"var(--blue-bg)":revPct>=90?"var(--green-bg)":revPct>=70?"var(--amber-bg)":"var(--red-bg)";
+
+      // Adherence
+      const adhCol=adherenceColor(p), adhBg=adherenceBg(p);
+
+      heroEl.innerHTML=`
+        <div class="hero-kpi hero-kpi-revenue">
+          <div class="hkpi-label">Revenue Achieved Today</div>
+          <div class="hkpi-value">${inr(achRev)}</div>
+          <div class="hkpi-sub">
+            ${totalDailyTarget?`<div class="hkpi-bar-bg"><div class="hkpi-bar-fill" style="width:${revPct}%;background:${revCol}"></div></div>
+            <span style="color:${revCol};font-weight:700">${revPct}% of daily target</span> · Target ${inr(totalDailyTarget)}`
+            :`<span style="color:var(--faint)">No target set — go to Planning → Targets</span>`}
+          </div>
+        </div>
+        <div class="hero-kpi hero-kpi-pipeline">
+          <div class="hkpi-label">Total Pipeline Size</div>
+          <div class="hkpi-value">${total}</div>
+          <div class="hkpi-sub">
+            <span style="color:var(--green);font-weight:600">${conv.length} converted</span>
+            &nbsp;·&nbsp;
+            <span style="color:var(--amber)">${pending} pending</span>
+            &nbsp;·&nbsp;
+            <span style="color:var(--red)">${lost.length} lost</span>
+          </div>
+        </div>
+        <div class="hero-kpi hero-kpi-adherence" style="background:${adhBg};border-color:${adhCol}30">
+          <div class="hkpi-label" style="color:${adhCol}">Overall Adherence</div>
+          <div class="hkpi-value" style="color:${adhCol}">${p}%</div>
+          <div class="hkpi-sub">
+            <div class="hkpi-bar-bg"><div class="hkpi-bar-fill" style="width:${p}%;background:${adhCol}"></div></div>
+            <span style="color:${adhCol};font-weight:700">${adherenceLabel(p)}</span>
+            &nbsp;·&nbsp; Target ≥ 80%
+          </div>
+        </div>`;
+    }
 
     document.getElementById("admin-metrics").innerHTML=`
-      <div class="metric"><div class="mlabel">Total Pipeline</div><div class="mval">${total}</div></div>
-      <div class="metric"><div class="mlabel">Converted</div><div class="mval" style="color:#27500A">${conv.length}</div></div>
-      <div class="metric"><div class="mlabel">Lost</div><div class="mval" style="color:#A32D2D">${lost.length}</div></div>
-      <div class="metric"><div class="mlabel">Pending</div><div class="mval">${total-conv.length-lost.length}</div></div>
-      <div class="metric" style="background:${adherenceBg(p)};border-color:${adherenceColor(p)}40">
-        <div class="mlabel" style="color:${adherenceColor(p)}">Overall Adherence</div>
-        <div class="mval" style="color:${adherenceColor(p)}">${p}%</div>
-        <div class="msub" style="color:${adherenceColor(p)}">${adherenceLabel(p)}</div>
-      </div>
       <div class="metric"><div class="mlabel">Proj. Revenue</div><div class="mval sm">${inr(projRev)}</div></div>
-      <div class="metric"><div class="mlabel">Revenue Achieved</div><div class="mval sm" style="color:#27500A">${inr(achRev)}</div></div>
-      <div class="metric"><div class="mlabel">Revenue Gap</div><div class="mval sm" style="color:#A32D2D">${inr(projRev-achRev)}</div></div>
+      <div class="metric"><div class="mlabel">Revenue Gap</div><div class="mval sm" style="color:#A32D2D">${inr(Math.max(0,projRev-achRev))}</div></div>
+      <div class="metric"><div class="mlabel">HOT Leads</div><div class="mval">${allEntries.filter(e=>e.heat==="HOT"&&e.status==="pending").length}</div></div>
+      <div class="metric"><div class="mlabel">Zones Active</div><div class="mval">${ZONES.filter(z=>allEntries.some(e=>z.tls.includes(e.tlEmail))).length}/${ZONES.length}</div></div>
     `;
 
     document.getElementById("admin-zones").innerHTML = ZONES.map(z=>{
@@ -2878,6 +2895,100 @@
     }).join("") || '<p style="color:var(--faint);font-size:13px;padding:1rem">No data for this period yet</p>';
   }
 
+  /* ── PERFORMANCE HUB (RM) — consolidates Weekly + Analytics + Leaderboard ── */
+  function renderPerformanceHub() {
+    const el = document.getElementById("section-performance-hub");
+    if (!el) return;
+    // Render sub-tabs
+    el.innerHTML = `
+      <div style="display:flex;gap:6px;margin-bottom:1.25rem;border-bottom:1px solid var(--border);padding-bottom:0.75rem">
+        <button class="perf-tab perf-tab-active" data-pt="weekly" onclick="switchPerfTab(this,'weekly')">📅 Weekly</button>
+        <button class="perf-tab" data-pt="analytics" onclick="switchPerfTab(this,'analytics')">📊 Analytics</button>
+        <button class="perf-tab" data-pt="leaderboard" onclick="switchPerfTab(this,'leaderboard')">🏆 Leaderboard</button>
+      </div>
+      <div id="perf-sub-weekly"></div>
+      <div id="perf-sub-analytics" style="display:none"></div>
+      <div id="perf-sub-leaderboard" style="display:none"></div>`;
+    // Inject weekly into its sub-panel — reuse existing section render
+    renderWeeklyInto("perf-sub-weekly");
+  }
+
+  window.switchPerfTab = function(btn, tab) {
+    document.querySelectorAll(".perf-tab").forEach(b=>b.classList.remove("perf-tab-active"));
+    btn.classList.add("perf-tab-active");
+    ["weekly","analytics","leaderboard"].forEach(t=>{
+      const el=document.getElementById("perf-sub-"+t);
+      if(el) el.style.display = t===tab?"block":"none";
+    });
+    if(tab==="analytics"){
+      // swap section-analytics content into the sub panel
+      const src=document.getElementById("section-analytics");
+      const dest=document.getElementById("perf-sub-analytics");
+      if(dest&&(!dest.dataset.rendered)){
+        dest.dataset.rendered="1";
+        renderAnalytics(); // renders into section-analytics
+        setTimeout(()=>{dest.innerHTML=src.innerHTML;},200);
+      }
+    }
+    if(tab==="leaderboard"){
+      const dest=document.getElementById("perf-sub-leaderboard");
+      if(dest&&(!dest.dataset.rendered)){
+        dest.dataset.rendered="1";
+        renderLeaderboardSection();
+        const src=document.getElementById("section-leaderboard");
+        setTimeout(()=>{dest.innerHTML=src.innerHTML;},200);
+      }
+    }
+  };
+
+  // Renders weekly report into an arbitrary container id instead of section-weekly
+  function renderWeeklyInto(containerId) {
+    // Temporarily redirect rendering — reuse renderWeekly which targets section-weekly
+    renderWeekly();
+    setTimeout(()=>{
+      const src=document.getElementById("section-weekly");
+      const dest=document.getElementById(containerId);
+      if(src&&dest) dest.innerHTML=src.innerHTML;
+    },200);
+  }
+
+  /* ── PLANNING HUB (RM) — consolidates Targets + History ── */
+  function renderPlanningHub() {
+    const el = document.getElementById("section-planning-hub");
+    if (!el) return;
+    el.innerHTML = `
+      <div style="display:flex;gap:6px;margin-bottom:1.25rem;border-bottom:1px solid var(--border);padding-bottom:0.75rem">
+        <button class="perf-tab perf-tab-active" data-pt="targets" onclick="switchPlanTab(this,'targets')">🎯 Targets</button>
+        <button class="perf-tab" data-pt="history" onclick="switchPlanTab(this,'history')">📆 History</button>
+      </div>
+      <div id="plan-sub-targets"></div>
+      <div id="plan-sub-history" style="display:none"></div>`;
+    renderTargets();
+    setTimeout(()=>{
+      const src=document.getElementById("section-targets");
+      const dest=document.getElementById("plan-sub-targets");
+      if(src&&dest) dest.innerHTML=src.innerHTML;
+    },200);
+  }
+
+  window.switchPlanTab = function(btn, tab) {
+    document.querySelectorAll(".perf-tab").forEach(b=>b.classList.remove("perf-tab-active"));
+    btn.classList.add("perf-tab-active");
+    ["targets","history"].forEach(t=>{
+      const el=document.getElementById("plan-sub-"+t);
+      if(el) el.style.display = t===tab?"block":"none";
+    });
+    if(tab==="history"){
+      const dest=document.getElementById("plan-sub-history");
+      if(dest&&(!dest.dataset.rendered)){
+        dest.dataset.rendered="1";
+        renderHistory();
+        const src=document.getElementById("section-history");
+        setTimeout(()=>{dest.innerHTML=src.innerHTML;},200);
+      }
+    }
+  };
+
   /* ── AI COACH (Claude-powered) ── */
   window.chatOpen = false;
   window.chatHistory = [];
@@ -3184,6 +3295,37 @@ body { font-family: var(--font); background: var(--bg); color: var(--text); font
 /* ── CARDS ── */
 .card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-lg); padding: 1rem 1.25rem; margin-bottom: 0.75rem; }
 .card-title { font-size: 10.5px; font-weight: 700; color: var(--faint); text-transform: uppercase; letter-spacing: 0.07em; margin-bottom: 0.75rem; }
+
+/* ── HERO KPI STRIP ── */
+.hero-kpi-strip { display: grid; grid-template-columns: repeat(3,1fr); gap: 12px; margin-bottom: 1rem; }
+@media(max-width:900px) { .hero-kpi-strip { grid-template-columns: 1fr; } }
+.hero-kpi {
+  background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-lg);
+  padding: 1.1rem 1.25rem 1rem; position: relative; overflow: hidden;
+  transition: box-shadow var(--transition);
+}
+.hero-kpi:hover { box-shadow: 0 2px 12px rgba(0,0,0,0.06); }
+.hero-kpi::before { content:''; position:absolute; top:0; left:0; right:0; height:3px; }
+.hero-kpi-revenue::before { background: var(--brand); }
+.hero-kpi-pipeline::before { background: #3C3489; }
+.hero-kpi-adherence::before { background: currentColor; opacity:0.7; }
+.hkpi-label { font-size:10.5px; font-weight:700; color:var(--faint); text-transform:uppercase; letter-spacing:0.07em; margin-bottom:6px; }
+.hkpi-value { font-size:32px; font-weight:700; color:var(--text); line-height:1; margin-bottom:10px; letter-spacing:-0.5px; }
+.hkpi-sub { font-size:11.5px; color:var(--muted); display:flex; flex-direction:column; gap:5px; }
+.hkpi-bar-bg { height:5px; background:var(--border); border-radius:4px; overflow:hidden; }
+.hkpi-bar-fill { height:100%; border-radius:4px; transition:width 0.6s ease; }
+
+/* ── NAV DROPDOWN (Admin menu) ── */
+.nav-more-wrap { position:relative; }
+.nav-more-dropdown { display:none; position:absolute; top:calc(100% + 6px); right:0; background:var(--surface); border:1px solid var(--border); border-radius:var(--radius-lg); padding:4px; min-width:180px; z-index:500; box-shadow:0 4px 16px rgba(0,0,0,0.1); }
+.nav-more-dropdown.open { display:block; }
+.nav-dropdown-item { display:block; width:100%; padding:8px 12px; border:none; background:transparent; font-family:var(--font); font-size:12px; font-weight:500; color:var(--text); cursor:pointer; border-radius:8px; text-align:left; transition:background var(--transition); }
+.nav-dropdown-item:hover { background:var(--bg); }
+
+/* ── PERFORMANCE / PLANNING SUB-TABS ── */
+.perf-tab { padding:6px 16px; border-radius:20px; border:1px solid var(--border); background:transparent; font-family:var(--font); font-size:12px; font-weight:500; cursor:pointer; color:var(--muted); transition:all var(--transition); }
+.perf-tab:hover { background:var(--bg); color:var(--text); }
+.perf-tab.perf-tab-active { background:var(--text); color:white; border-color:var(--text); }
 
 /* ── METRICS ── */
 .metrics { display: grid; grid-template-columns: repeat(auto-fill,minmax(120px,1fr)); gap: 8px; margin-bottom: 0.75rem; }
@@ -3834,16 +3976,14 @@ tr:hover td { background: var(--surface-2); }
 
     <!-- ─── ADMIN SECTION ─── -->
     <div id="section-admin" class="section">
-      <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;margin-bottom:0.75rem">
-        <div class="card-title" style="margin:0">Overview Dashboard</div>
-        <div class="export-bar" style="margin-bottom:0">
-          <button class="btn-export" onclick="exportExcel('today')">📥 Today</button>
-          <button class="btn-export" onclick="exportExcel('week')">📥 Week</button>
-          <button class="btn-export" onclick="openExportRangeModal()">📅 Range</button>
-        </div>
-      </div>
-      <div class="metrics" id="admin-metrics"></div>
-      <div class="chart-row">
+      <!-- Hero KPI Strip -->
+      <div class="hero-kpi-strip" id="admin-hero-kpis"></div>
+
+      <!-- Secondary metrics row -->
+      <div class="metrics" id="admin-metrics" style="margin-bottom:0.75rem"></div>
+
+      <!-- Zone Performance — primary content -->
+      <div class="chart-row" style="margin-bottom:0.75rem">
         <div class="chart-box" style="grid-column:1/-1"><div class="chart-title">Zone-wise Projection vs Conversion — Today</div><div class="chart-canvas-wrap"><canvas id="admin-bar"></canvas></div></div>
       </div>
       <div id="admin-mtd"></div>
@@ -3884,6 +4024,12 @@ tr:hover td { background: var(--surface-2); }
         </div>
       </div>
     </div>
+
+    <!-- ─── PERFORMANCE HUB SECTION (RM) ─── -->
+    <div id="section-performance-hub" class="section"></div>
+
+    <!-- ─── PLANNING HUB SECTION (RM) ─── -->
+    <div id="section-planning-hub" class="section"></div>
 
     <!-- ─── WEEKLY SECTION ─── -->
     <div id="section-weekly" class="section">
@@ -3965,9 +4111,6 @@ tr:hover td { background: var(--surface-2); }
 
     <!-- ─── TARGETS SECTION (RM only) ─── -->
     <div id="section-targets" class="section"></div>
-
-    <!-- ─── DAILY TRACK SECTION ─── -->
-    <div id="section-daily-track" class="section"></div>
 
   </div><!-- /main -->
 </div><!-- /app -->
@@ -4388,11 +4531,7 @@ window.submitTMUnplanned = async function() {
   const isConv = tmUnplMode === "converted";
   if (!mid||!mname||!plan) { showToast("Member ID, Name and Plan are required","error"); return; }
   if (rev <= 0)             { showToast("Please enter revenue","error"); return; }
-  if (rev < 12000)          { showToast("Minimum revenue is ₹12,000","error"); return; }
-  if (rev > 100000)         { showToast("Maximum revenue is ₹1,00,000","error"); return; }
   if (isConv && actual<=0)  { showToast("Please enter actual revenue collected","error"); return; }
-  if (isConv && actual<12000)  { showToast("Minimum actual revenue is ₹12,000","error"); return; }
-  if (isConv && actual>100000) { showToast("Maximum actual revenue is ₹1,00,000","error"); return; }
   const exists = allEntries.find(e=>e.memberId===mid&&e.tlEmail===currentUser.email&&e.date===todayStr());
   if (exists)               { showToast("This Member ID is already in today's pipeline","error"); return; }
   setLoading(true);
@@ -4650,855 +4789,5 @@ window.generateScorecard = async function() {
     });
   }
 </script>
-
-<!-- ══════════════════════════════════════════════════
-     DAILY TRACK — Full Feature Module (v2)
-══════════════════════════════════════════════════ -->
-
-
-<script>
-/* ══════════════════════════════════════════════════════════════════════════
-   DAILY TRACK MODULE v2
-   Data model (Firestore: daily_inputs, doc id: YYYY-MM-DD_tlEmail)
-   {
-     date, tlEmail, tlName, tmEmail, zone,
-     rpc_mtd, rpc_lmtd,                                    // RPC — TL submits
-     cl_lite_mtd_lead, cl_lite_mtd_lite, cl_lite_mtd_plus, // Conv VIP Lite MTD
-     cl_plus_mtd_lead, cl_plus_mtd_lite, cl_plus_mtd_plus, // Conv VIP Plus MTD
-     cl_lite_lmtd_lead, cl_lite_lmtd_lite, cl_lite_lmtd_plus,
-     cl_plus_lmtd_lead, cl_plus_lmtd_lite, cl_plus_lmtd_plus,
-     pr_lite_mtd_pres, pr_plus_mtd_pres,                   // Pres Done MTD (lead auto-copied)
-     pr_lite_lmtd_pres, pr_plus_lmtd_pres,
-     submittedAt, updatedAt
-   }
-   All % and totals are derived / auto-computed — never stored redundantly.
-══════════════════════════════════════════════════════════════════════════ */
-
-/* ──────────────────────────────────────────────────────
-   FORMULA HELPERS
-────────────────────────────────────────────────────── */
-const dtF = {
-  pct:   (n, d)  => d ? n / d * 100 : null,
-  gr:    (mtd, lmtd) => lmtd ? (mtd / lmtd - 1) * 100 : null,
-  fmt:   v => (v == null) ? "—" : parseFloat(v).toFixed(1) + "%",
-  fmtN:  v => (v == null || v === "" || v === undefined) ? "—" : Number(v),
-  fmtGR: v => {
-    if (v == null) return { text: "—", cls: "" };
-    const t = (v >= 0 ? "+" : "") + parseFloat(v).toFixed(1) + "%";
-    const cls = v > 0 ? "dt-gr-pos" : v < 0 ? "dt-gr-neg" : "dt-gr-zero";
-    return { text: t, cls };
-  }
-};
-
-/* ──────────────────────────────────────────────────────
-   MAIN RENDER ENTRY
-────────────────────────────────────────────────────── */
-window.renderDailyTrack = async function() {
-  const role = window.__dt_role;
-  const el = document.getElementById("section-daily-track");
-  if (!el) return;
-  if (role === "tl") {
-    el.innerHTML = buildTLShell();
-    await loadAndPopulateTLForm();
-  } else if (role === "tm") {
-    el.innerHTML = buildViewerShell("TL Submissions", "dt-tm-content", "loadTMDailyInputs()");
-    await loadTMDailyInputs();
-  } else {
-    el.innerHTML = buildViewerShell("All Zones", "dt-rm-content", "loadRMDailyInputs()", true);
-    await loadRMDailyInputs();
-  }
-};
-
-/* ══════════════════════════════════════════════════════
-   TL — INPUT FORM
-══════════════════════════════════════════════════════ */
-function buildTLShell() {
-  const today = new Date().toLocaleDateString("en-IN",{weekday:"long",day:"numeric",month:"short",year:"numeric"});
-  return `
-<div class="dt-page">
-  <div class="dt-page-header">
-    <div>
-      <div class="dt-page-title">📈 Daily Track Input</div>
-      <div class="dt-page-date">${today}</div>
-    </div>
-    <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
-      <span id="dt-save-status" class="dt-save-status"></span>
-      <button onclick="saveDailyInput()" class="dt-save-btn">💾 Save</button>
-    </div>
-  </div>
-
-  <!-- ── RPC % ── -->
-  <div class="dt-card">
-    <div class="dt-card-head">
-      <span class="dt-card-icon rpc-icon">📞</span>
-      <span class="dt-card-title">RPC %</span>
-      <span class="dt-formula-hint">% GR = MTD / LMTD − 1</span>
-    </div>
-    <div class="dt-rpc-grid">
-      <div class="dt-col-group">
-        <div class="dt-col-label mtd-label">MTD</div>
-        <div class="dt-field-wrap">
-          <label>Value</label>
-          <input id="dt-rpc-mtd" type="number" min="0" step="0.01" placeholder="e.g. 72.5" class="dt-inp" oninput="dtLiveCalc()">
-        </div>
-      </div>
-      <div class="dt-col-group">
-        <div class="dt-col-label lmtd-label">LMTD</div>
-        <div class="dt-field-wrap">
-          <label>Value</label>
-          <input id="dt-rpc-lmtd" type="number" min="0" step="0.01" placeholder="e.g. 68.0" class="dt-inp" oninput="dtLiveCalc()">
-        </div>
-      </div>
-      <div class="dt-col-group dt-auto-col">
-        <div class="dt-col-label gr-label">% GR <span class="dt-auto-tag">auto</span></div>
-        <div class="dt-calc-box"><span id="dt-rpc-gr">—</span></div>
-      </div>
-    </div>
-  </div>
-
-  <!-- ── PM Conversion ── -->
-  <div class="dt-card">
-    <div class="dt-card-head">
-      <span class="dt-card-icon conv-icon">🔁</span>
-      <span class="dt-card-title">PM Conversion</span>
-      <span class="dt-formula-hint">Tot = Lite + Plus &nbsp;·&nbsp; % Conv = Tot / Lead &nbsp;·&nbsp; % GR = % Conv MTD / % Conv LMTD − 1</span>
-    </div>
-    ${buildConvTable()}
-  </div>
-
-  <!-- ── PM Presentation ── -->
-  <div class="dt-card">
-    <div class="dt-card-head">
-      <span class="dt-card-icon pres-icon">🖥</span>
-      <span class="dt-card-title">PM Presentation</span>
-      <span class="dt-formula-hint">Lead = auto-linked from Conversion &nbsp;·&nbsp; Tot = Lite + Plus &nbsp;·&nbsp; % Pres = Tot / Lead &nbsp;·&nbsp; % GR = % Pres MTD / % Pres LMTD − 1</span>
-    </div>
-    ${buildPresTable()}
-  </div>
-
-  <div style="margin-top:1rem;display:flex;align-items:center;gap:12px;flex-wrap:wrap">
-    <button onclick="saveDailyInput()" class="dt-save-btn">💾 Save Today's Input</button>
-    <span style="font-size:12px;color:var(--muted)">You can update any time during the day.</span>
-  </div>
-</div>`;
-}
-
-function buildConvTable() {
-  const rows = ["VIP Lite","VIP Plus","Total PM"];
-  const rowIds = ["lite","plus","total"];
-  const makeInput = (id, ph="0") =>
-    `<input id="${id}" type="number" min="0" placeholder="${ph}" class="dt-inp dt-inp-sm" oninput="dtLiveCalc()">`;
-  const calcCell = id =>
-    `<div class="dt-calc-inline" id="${id}">—</div>`;
-
-  let h = `
-  <div class="dt-conv-wrap">
-    <table class="dt-tbl">
-      <thead>
-        <tr>
-          <th rowspan="2" class="dt-row-head">Plan</th>
-          <th colspan="5" class="dt-group-head mtd-head">MTD</th>
-          <th colspan="5" class="dt-group-head lmtd-head">LMTD</th>
-          <th rowspan="2" class="dt-group-head gr-head">% GR<span class="dt-auto-tag" style="margin-left:4px">auto</span></th>
-        </tr>
-        <tr>
-          <th>Lead Provided</th><th>Lite Order</th><th>Plus Order</th>
-          <th class="dt-auto-th">Tot Order<span class="dt-auto-tag">auto</span></th>
-          <th class="dt-auto-th">% Conv<span class="dt-auto-tag">auto</span></th>
-          <th>Lead Provided</th><th>Lite Order</th><th>Plus Order</th>
-          <th class="dt-auto-th">Tot Order<span class="dt-auto-tag">auto</span></th>
-          <th class="dt-auto-th">% Conv<span class="dt-auto-tag">auto</span></th>
-        </tr>
-      </thead>
-      <tbody>`;
-
-  rowIds.forEach((rid, i) => {
-    const label = rows[i];
-    const isTotal = rid === "total";
-    if (isTotal) {
-      h += `<tr class="dt-total-row">
-        <td class="dt-row-head">Total PM</td>
-        <td>${calcCell("dt-cl-total-mtd-lead")}</td>
-        <td>${calcCell("dt-cl-total-mtd-lite")}</td>
-        <td>${calcCell("dt-cl-total-mtd-plus")}</td>
-        <td>${calcCell("dt-cl-total-mtd-tot")}</td>
-        <td>${calcCell("dt-cl-total-mtd-pct")}</td>
-        <td>${calcCell("dt-cl-total-lmtd-lead")}</td>
-        <td>${calcCell("dt-cl-total-lmtd-lite")}</td>
-        <td>${calcCell("dt-cl-total-lmtd-plus")}</td>
-        <td>${calcCell("dt-cl-total-lmtd-tot")}</td>
-        <td>${calcCell("dt-cl-total-lmtd-pct")}</td>
-        <td>${calcCell("dt-cl-total-gr")}</td>
-      </tr>`;
-    } else {
-      h += `<tr>
-        <td class="dt-row-head"><span class="dt-plan-tag dt-plan-${rid}">${label}</span></td>
-        <td>${makeInput("dt-cl-"+rid+"-mtd-lead")}</td>
-        <td>${makeInput("dt-cl-"+rid+"-mtd-lite")}</td>
-        <td>${makeInput("dt-cl-"+rid+"-mtd-plus")}</td>
-        <td>${calcCell("dt-cl-"+rid+"-mtd-tot")}</td>
-        <td>${calcCell("dt-cl-"+rid+"-mtd-pct")}</td>
-        <td>${makeInput("dt-cl-"+rid+"-lmtd-lead")}</td>
-        <td>${makeInput("dt-cl-"+rid+"-lmtd-lite")}</td>
-        <td>${makeInput("dt-cl-"+rid+"-lmtd-plus")}</td>
-        <td>${calcCell("dt-cl-"+rid+"-lmtd-tot")}</td>
-        <td>${calcCell("dt-cl-"+rid+"-lmtd-pct")}</td>
-        <td>${calcCell("dt-cl-"+rid+"-gr")}</td>
-      </tr>`;
-    }
-  });
-
-  h += `</tbody></table></div>`;
-  return h;
-}
-
-function buildPresTable() {
-  // Lead Provided = auto (from Conversion lead for that plan row)
-  // Lite Pres + Plus Pres = TL inputs in EVERY plan row
-  // Tot Pres = Lite Pres + Plus Pres (auto)
-  // % Pres = Tot Pres / Lead Provided (auto)
-  const rows = ["VIP Lite","VIP Plus","Total PM"];
-  const rowIds = ["lite","plus","total"];
-  const inp = id =>
-    `<input id="${id}" type="number" min="0" placeholder="0" class="dt-inp dt-inp-sm" oninput="dtLiveCalc()">`;
-  const calc = id =>
-    `<div class="dt-calc-inline" id="${id}">—</div>`;
-
-  let h = `
-  <div class="dt-conv-wrap">
-    <table class="dt-tbl">
-      <thead>
-        <tr>
-          <th rowspan="2" class="dt-row-head">Plan</th>
-          <th colspan="5" class="dt-group-head mtd-head">MTD</th>
-          <th colspan="5" class="dt-group-head lmtd-head">LMTD</th>
-          <th rowspan="2" class="dt-group-head gr-head">% GR<span class="dt-auto-tag" style="margin-left:4px">auto</span></th>
-        </tr>
-        <tr>
-          <th class="dt-auto-th">Lead Provided<span class="dt-auto-tag">auto</span></th>
-          <th>Lite Pres</th><th>Plus Pres</th>
-          <th class="dt-auto-th">Tot Pres<span class="dt-auto-tag">auto</span></th>
-          <th class="dt-auto-th">% Pres<span class="dt-auto-tag">auto</span></th>
-          <th class="dt-auto-th">Lead Provided<span class="dt-auto-tag">auto</span></th>
-          <th>Lite Pres</th><th>Plus Pres</th>
-          <th class="dt-auto-th">Tot Pres<span class="dt-auto-tag">auto</span></th>
-          <th class="dt-auto-th">% Pres<span class="dt-auto-tag">auto</span></th>
-        </tr>
-      </thead>
-      <tbody>`;
-
-  rowIds.forEach((rid, i) => {
-    const label = rows[i];
-    const isTotal = rid === "total";
-    if (isTotal) {
-      h += `<tr class="dt-total-row">
-        <td class="dt-row-head">Total PM</td>
-        <td>${calc("dt-pr-total-mtd-lead")}</td>
-        <td>${calc("dt-pr-total-mtd-lite")}</td>
-        <td>${calc("dt-pr-total-mtd-plus")}</td>
-        <td>${calc("dt-pr-total-mtd-tot")}</td>
-        <td>${calc("dt-pr-total-mtd-pct")}</td>
-        <td>${calc("dt-pr-total-lmtd-lead")}</td>
-        <td>${calc("dt-pr-total-lmtd-lite")}</td>
-        <td>${calc("dt-pr-total-lmtd-plus")}</td>
-        <td>${calc("dt-pr-total-lmtd-tot")}</td>
-        <td>${calc("dt-pr-total-lmtd-pct")}</td>
-        <td>${calc("dt-pr-total-gr")}</td>
-      </tr>`;
-    } else {
-      // Both Lite Pres and Plus Pres are TL inputs in every plan row
-      h += `<tr>
-        <td class="dt-row-head"><span class="dt-plan-tag dt-plan-${rid}">${label}</span></td>
-        <td>${calc("dt-pr-"+rid+"-mtd-lead")}</td>
-        <td>${inp("dt-pr-"+rid+"-mtd-lite")}</td>
-        <td>${inp("dt-pr-"+rid+"-mtd-plus")}</td>
-        <td>${calc("dt-pr-"+rid+"-mtd-tot")}</td>
-        <td>${calc("dt-pr-"+rid+"-mtd-pct")}</td>
-        <td>${calc("dt-pr-"+rid+"-lmtd-lead")}</td>
-        <td>${inp("dt-pr-"+rid+"-lmtd-lite")}</td>
-        <td>${inp("dt-pr-"+rid+"-lmtd-plus")}</td>
-        <td>${calc("dt-pr-"+rid+"-lmtd-tot")}</td>
-        <td>${calc("dt-pr-"+rid+"-lmtd-pct")}</td>
-        <td>${calc("dt-pr-"+rid+"-gr")}</td>
-      </tr>`;
-    }
-  });
-
-  h += `</tbody></table></div>`;
-  return h;
-}
-
-/* ──────────────────────────────────────────────────────
-   LIVE RECALC — all formulas
-────────────────────────────────────────────────────── */
-window.dtLiveCalc = function() {
-  const g  = id => { const el=document.getElementById(id); return el ? (parseFloat(el.value)||0) : 0; };
-  const s  = (id, val, grObj) => {
-    const el = document.getElementById(id); if (!el) return;
-    if (grObj !== undefined) {
-      el.textContent = grObj.text;
-      el.className = "dt-calc-inline " + grObj.cls;
-    } else {
-      el.textContent = val;
-      el.className = "dt-calc-inline";
-    }
-  };
-  const pc  = (n,d) => d ? (n/d*100) : null;
-  const grV = (m,l) => l ? (m/l - 1)*100 : null;
-  const fmt  = v => v==null ? "—" : v.toFixed(1)+"%";
-  const fmtN = v => !v ? "—" : v;
-  const fmtGR = v => {
-    if (v==null) return { text:"—", cls:"" };
-    return { text:(v>=0?"+":"")+v.toFixed(1)+"%", cls: v>0?"dt-gr-pos":v<0?"dt-gr-neg":"dt-gr-zero" };
-  };
-
-  /* RPC */
-  const rpcMTD = g("dt-rpc-mtd"), rpcLMTD = g("dt-rpc-lmtd");
-  const rpcGR = grV(rpcMTD, rpcLMTD);
-  const rpcEl = document.getElementById("dt-rpc-gr");
-  if (rpcEl) { const r=fmtGR(rpcGR); rpcEl.textContent=r.text; rpcEl.className="dt-calc-box "+r.cls; }
-
-  /* CONVERSION — derive totals and % for lite, plus, then total */
-  const plans = ["lite","plus"];
-  const periods = ["mtd","lmtd"];
-  const convPct = {};
-  plans.forEach(p => {
-    periods.forEach(period => {
-      const lead = g("dt-cl-"+p+"-"+period+"-lead");
-      const lite  = g("dt-cl-"+p+"-"+period+"-lite");
-      const plus  = g("dt-cl-"+p+"-"+period+"-plus");
-      const tot   = lite + plus;
-      const pct   = pc(tot, lead);
-      convPct[p+"_"+period] = pct;
-      s("dt-cl-"+p+"-"+period+"-tot",  fmtN(tot||null));
-      s("dt-cl-"+p+"-"+period+"-pct",  fmt(pct));
-    });
-    const gr = grV(convPct[p+"_mtd"], convPct[p+"_lmtd"]);
-    s("dt-cl-"+p+"-gr", undefined, fmtGR(gr));
-  });
-  // Total PM rows
-  periods.forEach(period => {
-    const liteLead  = g("dt-cl-lite-"+period+"-lead");
-    const plusLead  = g("dt-cl-plus-"+period+"-lead");
-    const liteLite  = g("dt-cl-lite-"+period+"-lite");
-    const litePlus  = g("dt-cl-lite-"+period+"-plus");
-    const plusLite  = g("dt-cl-plus-"+period+"-lite");
-    const plusPlus  = g("dt-cl-plus-"+period+"-plus");
-    const totLead   = liteLead + plusLead;
-    const totLite   = liteLite + plusLite;
-    const totPlus   = litePlus + plusPlus;
-    const totTot    = totLite + totPlus;
-    const totPct    = pc(totTot, totLead);
-    convPct["total_"+period] = totPct;
-    s("dt-cl-total-"+period+"-lead", fmtN(totLead||null));
-    s("dt-cl-total-"+period+"-lite", fmtN(totLite||null));
-    s("dt-cl-total-"+period+"-plus", fmtN(totPlus||null));
-    s("dt-cl-total-"+period+"-tot",  fmtN(totTot||null));
-    s("dt-cl-total-"+period+"-pct",  fmt(totPct));
-  });
-  s("dt-cl-total-gr", undefined, fmtGR(grV(convPct["total_mtd"], convPct["total_lmtd"])));
-
-  /* PRESENTATION
-     Lead Provided = same plan's Conv Lead (no cross-link)
-     Lite Pres + Plus Pres = direct TL inputs
-     Tot Pres = Lite Pres + Plus Pres
-     % Pres   = Tot Pres / Lead
-     % GR     = % Pres MTD / % Pres LMTD − 1
-  */
-  const prLeadMap = {
-    lite: { mtd: g("dt-cl-lite-mtd-lead"), lmtd: g("dt-cl-lite-lmtd-lead") },
-    plus: { mtd: g("dt-cl-plus-mtd-lead"), lmtd: g("dt-cl-plus-lmtd-lead") }
-  };
-  const presPct = {};
-  plans.forEach(p => {
-    periods.forEach(period => {
-      const lead     = prLeadMap[p][period];
-      const litePres = g("dt-pr-"+p+"-"+period+"-lite");
-      const plusPres = g("dt-pr-"+p+"-"+period+"-plus");
-      const tot      = litePres + plusPres;
-      const pct      = pc(tot, lead);
-      presPct[p+"_"+period] = pct;
-      s("dt-pr-"+p+"-"+period+"-lead", fmtN(lead||null));
-      s("dt-pr-"+p+"-"+period+"-tot",  fmtN(tot||null));
-      s("dt-pr-"+p+"-"+period+"-pct",  fmt(pct));
-    });
-    s("dt-pr-"+p+"-gr", undefined, fmtGR(grV(presPct[p+"_mtd"], presPct[p+"_lmtd"])));
-  });
-  // Total PM Presentation
-  periods.forEach(period => {
-    const liteLead  = prLeadMap["lite"][period];
-    const plusLead  = prLeadMap["plus"][period];
-    const totLead   = liteLead + plusLead;
-    const liteLiteP = g("dt-pr-lite-"+period+"-lite");
-    const litePlusP = g("dt-pr-lite-"+period+"-plus");
-    const plusLiteP = g("dt-pr-plus-"+period+"-lite");
-    const plusPlusP = g("dt-pr-plus-"+period+"-plus");
-    const totLite   = liteLiteP + plusLiteP;
-    const totPlus   = litePlusP + plusPlusP;
-    const totTot    = totLite + totPlus;
-    const totPct    = pc(totTot, totLead);
-    presPct["total_"+period] = totPct;
-    s("dt-pr-total-"+period+"-lead", fmtN(totLead||null));
-    s("dt-pr-total-"+period+"-lite", fmtN(totLite||null));
-    s("dt-pr-total-"+period+"-plus", fmtN(totPlus||null));
-    s("dt-pr-total-"+period+"-tot",  fmtN(totTot||null));
-    s("dt-pr-total-"+period+"-pct",  fmt(totPct));
-  });
-  s("dt-pr-total-gr", undefined, fmtGR(grV(presPct["total_mtd"], presPct["total_lmtd"])));
-};
-
-/* ──────────────────────────────────────────────────────
-   LOAD TL DATA FROM FIRESTORE
-────────────────────────────────────────────────────── */
-async function loadAndPopulateTLForm() {
-  const db = window.__dt_db, user = window.__dt_user;
-  if (!db || !user) return;
-  const today = new Date().toISOString().split("T")[0];
-  try {
-    const snap = await window.__dt_getDoc(window.__dt_doc(db, "daily_inputs", today+"_"+user.email));
-    if (snap.exists()) {
-      const d = snap.data();
-      const sv = (id, v) => { const el=document.getElementById(id); if(el&&v!=null&&v!=="") el.value=v; };
-      sv("dt-rpc-mtd", d.rpc_mtd); sv("dt-rpc-lmtd", d.rpc_lmtd);
-      ["lite","plus"].forEach(p => {
-        ["mtd","lmtd"].forEach(pr => {
-          sv("dt-cl-"+p+"-"+pr+"-lead", d["cl_"+p+"_"+pr+"_lead"]);
-          sv("dt-cl-"+p+"-"+pr+"-lite", d["cl_"+p+"_"+pr+"_lite"]);
-          sv("dt-cl-"+p+"-"+pr+"-plus", d["cl_"+p+"_"+pr+"_plus"]);
-          sv("dt-pr-"+p+"-"+pr+"-lite", d["pr_"+p+"_"+pr+"_lite"]);
-          sv("dt-pr-"+p+"-"+pr+"-plus", d["pr_"+p+"_"+pr+"_plus"]);
-        });
-      });
-      const ss = document.getElementById("dt-save-status");
-      if (ss) ss.textContent = "Last saved " + (d.updatedAt?.toDate?.()?.toLocaleTimeString("en-IN",{hour:"2-digit",minute:"2-digit"}) || "—");
-      dtLiveCalc();
-    }
-  } catch(e) { console.warn("DT load:", e); }
-}
-
-/* ──────────────────────────────────────────────────────
-   SAVE TL DATA
-────────────────────────────────────────────────────── */
-window.saveDailyInput = async function() {
-  const db = window.__dt_db, user = window.__dt_user, profile = window.__dt_profile;
-  if (!db || !user || !profile) return;
-
-  const gv = id => { const el=document.getElementById(id); return el&&el.value!==""?parseFloat(el.value):null; };
-  const today = new Date().toISOString().split("T")[0];
-  const zones = window.__dt_getZones();
-  const myZone = zones.find(z => z.tls.includes(user.email));
-
-  const payload = {
-    date: today, tlEmail: user.email, tlName: profile.name,
-    tmEmail: profile.tm || (myZone ? myZone.tm : ""), zone: profile.zone || "",
-    rpc_mtd: gv("dt-rpc-mtd"), rpc_lmtd: gv("dt-rpc-lmtd"),
-    updatedAt: window.__dt_serverTimestamp()
-  };
-  ["lite","plus"].forEach(p => {
-    ["mtd","lmtd"].forEach(pr => {
-      payload["cl_"+p+"_"+pr+"_lead"] = gv("dt-cl-"+p+"-"+pr+"-lead");
-      payload["cl_"+p+"_"+pr+"_lite"] = gv("dt-cl-"+p+"-"+pr+"-lite");
-      payload["cl_"+p+"_"+pr+"_plus"] = gv("dt-cl-"+p+"-"+pr+"-plus");
-      payload["pr_"+p+"_"+pr+"_lite"] = gv("dt-pr-"+p+"-"+pr+"-lite");
-      payload["pr_"+p+"_"+pr+"_plus"] = gv("dt-pr-"+p+"-"+pr+"-plus");
-    });
-  });
-
-  try {
-    const docRef = window.__dt_doc(db, "daily_inputs", today+"_"+user.email);
-    const snap = await window.__dt_getDoc(docRef);
-    if (snap.exists()) await window.__dt_updateDoc(docRef, payload);
-    else { payload.submittedAt = window.__dt_serverTimestamp(); await window.__dt_setDoc(docRef, payload); }
-    const ss = document.getElementById("dt-save-status");
-    if (ss) ss.textContent = "Saved at " + new Date().toLocaleTimeString("en-IN",{hour:"2-digit",minute:"2-digit"});
-    showToast("Daily input saved ✓", "success");
-  } catch(e) { showToast("Save failed: "+e.message, "error"); }
-};
-
-/* ══════════════════════════════════════════════════════
-   VIEWER SHELL (shared by TM + RM)
-══════════════════════════════════════════════════════ */
-function buildViewerShell(subtitle, contentId, reloadFn, withZoneFilter=false) {
-  const today = new Date().toLocaleDateString("en-IN",{weekday:"long",day:"numeric",month:"short",year:"numeric"});
-  const zoneSelect = withZoneFilter
-    ? `<select id="dt-rm-zone-filter" onchange="${reloadFn}"
-        style="padding:6px 12px;border-radius:var(--radius);border:1px solid var(--border);font-family:var(--font);font-size:12px;background:var(--bg);color:var(--text)">
-        <option value="">All Zones</option></select>` : "";
-  return `
-<div class="dt-page">
-  <div class="dt-page-header">
-    <div>
-      <div class="dt-page-title">📈 Daily Track — ${subtitle}</div>
-      <div class="dt-page-date">${today}</div>
-    </div>
-    <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
-      ${zoneSelect}
-      <input id="dt-date-picker" type="date" value="${new Date().toISOString().split("T")[0]}"
-        onchange="${reloadFn}"
-        style="padding:6px 12px;border-radius:var(--radius);border:1px solid var(--border);font-family:var(--font);font-size:12px;background:var(--bg);color:var(--text)">
-    </div>
-  </div>
-  <div id="${contentId}">
-    <div class="dt-loading">Loading…</div>
-  </div>
-</div>`;
-}
-
-/* ══════════════════════════════════════════════════════
-   TM — LOAD & RENDER
-══════════════════════════════════════════════════════ */
-window.loadTMDailyInputs = async function() {
-  const db = window.__dt_db, user = window.__dt_user;
-  if (!db || !user) return;
-  const date = document.getElementById("dt-date-picker")?.value || new Date().toISOString().split("T")[0];
-  const zones = window.__dt_getZones();
-  const alias = window.__dt_demoAlias || {};
-  const resolvedEmail = alias[user.email] || user.email;
-  const myZone = zones.find(z => z.tm === resolvedEmail);
-  const myTLs = myZone ? myZone.tls : [];
-  const el = document.getElementById("dt-tm-content");
-  if (!el) return;
-  el.innerHTML = `<div class="dt-loading">Loading…</div>`;
-  if (!myTLs.length) { el.innerHTML=`<div class="dt-loading">No TLs found for your zone.</div>`; return; }
-  try {
-    const { getDocs, collection, query, where } = window.__dt_firestore;
-    // Query by date only, then filter client-side by tlEmail ∈ myTLs
-    // This avoids any tmEmail field mismatch issues
-    const snap = await getDocs(query(collection(db,"daily_inputs"), where("date","==",date)));
-    const rows = snap.docs.map(d => d.data()).filter(r => myTLs.includes(r.tlEmail));
-    el.innerHTML = renderViewerHTML(rows, myTLs, date, false);
-  } catch(e) { el.innerHTML=`<div class="dt-loading">Error: ${e.message}</div>`; console.error(e); }
-};
-
-/* ══════════════════════════════════════════════════════
-   RM — LOAD & RENDER
-══════════════════════════════════════════════════════ */
-window.loadRMDailyInputs = async function() {
-  const db = window.__dt_db;
-  if (!db) return;
-  const date = document.getElementById("dt-date-picker")?.value || new Date().toISOString().split("T")[0];
-  const zoneFilter = document.getElementById("dt-rm-zone-filter")?.value || "";
-  const zones = window.__dt_getZones();
-  const zoneEl = document.getElementById("dt-rm-zone-filter");
-  if (zoneEl && zoneEl.options.length === 1) {
-    zones.forEach(z => { const o=document.createElement("option"); o.value=z.name; o.textContent=z.name; zoneEl.appendChild(o); });
-  }
-  const el = document.getElementById("dt-rm-content");
-  if (!el) return;
-  el.innerHTML = `<div class="dt-loading">Loading…</div>`;
-  try {
-    const { getDocs, collection, query, where } = window.__dt_firestore;
-    const snap = await getDocs(query(collection(db,"daily_inputs"), where("date","==",date)));
-    const allRows = snap.docs.map(d => d.data());
-    const filteredZones = zoneFilter ? zones.filter(z => z.name === zoneFilter) : zones;
-    el.innerHTML = renderRMHTML(allRows, filteredZones);
-  } catch(e) { el.innerHTML=`<div class="dt-loading">Error loading data</div>`; console.error(e); }
-};
-
-/* ──────────────────────────────────────────────────────
-   SHARED RENDER: viewer table HTML
-────────────────────────────────────────────────────── */
-function renderViewerHTML(rows, allTLs, date, showZoneHeader=false) {
-  const teamMap = window.__dt_getTeamMap();
-  const lookup = {};
-  rows.forEach(r => lookup[r.tlEmail] = r);
-  const submitted = rows.filter(r => allTLs.includes(r.tlEmail)).length;
-  const total = allTLs.length;
-
-  // Helper formatters
-  const fN = v => (v==null||v===undefined) ? "—" : v;
-  const fP = v => {
-    if (v==null) return `<span class="dt-null">—</span>`;
-    const n = parseFloat(v);
-    const cls = n>=0?"dt-gr-pos":"dt-gr-neg";
-    const sign = n>=0?"+":"";
-    return `<strong class="${cls}">${sign}${n.toFixed(1)}%</strong>`;
-  };
-  const calcPct = (n, d) => d ? (n/d*100) : null;
-  const calcGR  = (m, l) => l ? (m/l-1)*100 : null;
-  const fmtPct  = v => v==null?"—":v.toFixed(1)+"%";
-  const grSpan  = v => {
-    if (v==null) return `<span class="dt-null">—</span>`;
-    const cls = v>0?"dt-gr-pos":v<0?"dt-gr-neg":"dt-gr-zero";
-    return `<span class="${cls} dt-gr-val">${(v>=0?"+":"")+v.toFixed(1)+"%"}</span>`;
-  };
-
-  // Submission pills
-  let html = `<div class="dt-sub-pills">
-    <div class="dt-pill dt-pill-all">${submitted}/${total} Submitted</div>
-    <div class="dt-pill dt-pill-pend">${total-submitted} Pending</div>
-  </div>`;
-
-  // ── RPC table ──
-  html += `<div class="dt-view-card">
-    <div class="dt-view-card-title"><span class="dt-card-icon rpc-icon">📞</span> RPC %</div>
-    <div class="tbl-wrap"><table class="dt-tbl dt-view-tbl">
-      <thead><tr>
-        <th>TL</th>
-        <th class="mtd-col">MTD</th>
-        <th class="lmtd-col">LMTD</th>
-        <th class="gr-col">% GR</th>
-        <th>Status</th>
-      </tr></thead><tbody>`;
-  allTLs.forEach(email => {
-    const name = teamMap[email]?.name || email;
-    const r = lookup[email];
-    if (!r) {
-      html += `<tr><td><b>${name}</b></td><td colspan="3" class="dt-null-row">Not submitted yet</td><td><span class="dt-badge dt-badge-pend">Pending</span></td></tr>`;
-    } else {
-      const gr = calcGR(r.rpc_mtd, r.rpc_lmtd);
-      html += `<tr><td><b>${name}</b></td><td>${fN(r.rpc_mtd)}</td><td>${fN(r.rpc_lmtd)}</td><td>${grSpan(gr)}</td><td><span class="dt-badge dt-badge-done">✓ Done</span></td></tr>`;
-    }
-  });
-  html += `</tbody></table></div></div>`;
-
-  // ── Conversion table ──
-  html += `<div class="dt-view-card">
-    <div class="dt-view-card-title"><span class="dt-card-icon conv-icon">🔁</span> PM Conversion</div>
-    <div class="tbl-wrap"><table class="dt-tbl dt-view-tbl">
-      <thead>
-        <tr>
-          <th rowspan="2" class="dt-sticky-col">TL</th><th rowspan="2">Plan</th>
-          <th colspan="4" class="mtd-head">MTD</th>
-          <th colspan="4" class="lmtd-head">LMTD</th>
-          <th rowspan="2" class="gr-head">% GR</th>
-        </tr>
-        <tr>
-          <th class="mtd-head">Lead</th><th class="mtd-head">Lite Ord</th><th class="mtd-head">Plus Ord</th><th class="mtd-head">% Conv</th>
-          <th class="lmtd-head">Lead</th><th class="lmtd-head">Lite Ord</th><th class="lmtd-head">Plus Ord</th><th class="lmtd-head">% Conv</th>
-        </tr>
-      </thead><tbody>`;
-  allTLs.forEach(email => {
-    const name = teamMap[email]?.name || email;
-    const r = lookup[email];
-    if (!r) {
-      html += `<tr><td class="dt-sticky-col"><b>${name}</b></td><td colspan="10" class="dt-null-row">Not submitted</td></tr>`;
-    } else {
-      ["lite","plus","total"].forEach((p, idx) => {
-        const planLabel = idx===0?"VIP Lite":idx===1?"VIP Plus":"Total PM";
-        const planCls   = idx===0?"dt-plan-lite":idx===1?"dt-plan-plus":"dt-plan-total";
-        const isTot = p==="total";
-        let mLead, mLite, mPlus, lLead, lLite, lPlus;
-        if (isTot) {
-          mLead=(r.cl_lite_mtd_lead||0)+(r.cl_plus_mtd_lead||0);
-          mLite=(r.cl_lite_mtd_lite||0)+(r.cl_plus_mtd_lite||0);
-          mPlus=(r.cl_lite_mtd_plus||0)+(r.cl_plus_mtd_plus||0);
-          lLead=(r.cl_lite_lmtd_lead||0)+(r.cl_plus_lmtd_lead||0);
-          lLite=(r.cl_lite_lmtd_lite||0)+(r.cl_plus_lmtd_lite||0);
-          lPlus=(r.cl_lite_lmtd_plus||0)+(r.cl_plus_lmtd_plus||0);
-        } else {
-          mLead=r["cl_"+p+"_mtd_lead"]||0; mLite=r["cl_"+p+"_mtd_lite"]||0; mPlus=r["cl_"+p+"_mtd_plus"]||0;
-          lLead=r["cl_"+p+"_lmtd_lead"]||0; lLite=r["cl_"+p+"_lmtd_lite"]||0; lPlus=r["cl_"+p+"_lmtd_plus"]||0;
-        }
-        const mTot=mLite+mPlus, lTot=lLite+lPlus;
-        const mPct=calcPct(mTot,mLead), lPct=calcPct(lTot,lLead);
-        const gr=calcGR(mPct,lPct);
-        const rowCls = isTot ? " class='dt-total-row'" : "";
-        const tlCell = idx===0?`<td class="dt-sticky-col" rowspan="3"><b>${name}</b></td>`:"";
-        html += `<tr${rowCls}>${tlCell}<td><span class="dt-plan-tag ${planCls}">${planLabel}</span></td>
-          <td>${fN(mLead||null)}</td><td>${fN(mLite||null)}</td><td>${fN(mPlus||null)}</td><td>${fmtPct(mPct)}</td>
-          <td>${fN(lLead||null)}</td><td>${fN(lLite||null)}</td><td>${fN(lPlus||null)}</td><td>${fmtPct(lPct)}</td>
-          <td>${grSpan(gr)}</td></tr>`;
-      });
-    }
-  });
-  html += `</tbody></table></div></div>`;
-
-  // ── Presentation table ──
-  html += `<div class="dt-view-card">
-    <div class="dt-view-card-title"><span class="dt-card-icon pres-icon">🖥</span> PM Presentation</div>
-    <div class="tbl-wrap"><table class="dt-tbl dt-view-tbl">
-      <thead>
-        <tr>
-          <th rowspan="2" class="dt-sticky-col">TL</th><th rowspan="2">Plan</th>
-          <th colspan="4" class="mtd-head">MTD</th>
-          <th colspan="4" class="lmtd-head">LMTD</th>
-          <th rowspan="2" class="gr-head">% GR</th>
-        </tr>
-        <tr>
-          <th class="mtd-head">Lead</th><th class="mtd-head">Lite Pres</th><th class="mtd-head">Plus Pres</th><th class="mtd-head">% Pres</th>
-          <th class="lmtd-head">Lead</th><th class="lmtd-head">Lite Pres</th><th class="lmtd-head">Plus Pres</th><th class="lmtd-head">% Pres</th>
-        </tr>
-      </thead><tbody>`;
-  allTLs.forEach(email => {
-    const name = teamMap[email]?.name || email;
-    const r = lookup[email];
-    if (!r) {
-      html += `<tr><td class="dt-sticky-col"><b>${name}</b></td><td colspan="10" class="dt-null-row">Not submitted</td></tr>`;
-    } else {
-      ["lite","plus","total"].forEach((p, idx) => {
-        const planLabel = idx===0?"VIP Lite":idx===1?"VIP Plus":"Total PM";
-        const planCls   = idx===0?"dt-plan-lite":idx===1?"dt-plan-plus":"dt-plan-total";
-        const isTot = p==="total";
-        let mLead, lLead, mLitePres, mPlusPres, lLitePres, lPlusPres;
-        if (isTot) {
-          mLead =(r.cl_lite_mtd_lead||0)+(r.cl_plus_mtd_lead||0);
-          lLead =(r.cl_lite_lmtd_lead||0)+(r.cl_plus_lmtd_lead||0);
-          mLitePres=(r.pr_lite_mtd_lite||0)+(r.pr_plus_mtd_lite||0);
-          mPlusPres=(r.pr_lite_mtd_plus||0)+(r.pr_plus_mtd_plus||0);
-          lLitePres=(r.pr_lite_lmtd_lite||0)+(r.pr_plus_lmtd_lite||0);
-          lPlusPres=(r.pr_lite_lmtd_plus||0)+(r.pr_plus_lmtd_plus||0);
-        } else {
-          mLead=r["cl_"+p+"_mtd_lead"]||0;  lLead=r["cl_"+p+"_lmtd_lead"]||0;
-          mLitePres=r["pr_"+p+"_mtd_lite"]||0; mPlusPres=r["pr_"+p+"_mtd_plus"]||0;
-          lLitePres=r["pr_"+p+"_lmtd_lite"]||0; lPlusPres=r["pr_"+p+"_lmtd_plus"]||0;
-        }
-        const mTot = mLitePres + mPlusPres;
-        const lTot = lLitePres + lPlusPres;
-        const mPct = calcPct(mTot, mLead), lPct = calcPct(lTot, lLead);
-        const gr   = calcGR(mPct, lPct);
-        const rowCls = isTot?" class='dt-total-row'":"";
-        const tlCell = idx===0?`<td class="dt-sticky-col" rowspan="3"><b>${name}</b></td>`:"";
-        html += `<tr${rowCls}>${tlCell}<td><span class="dt-plan-tag ${planCls}">${planLabel}</span></td>
-          <td>${fN(mLead||null)}</td><td>${fN(mLitePres||null)}</td><td>${fN(mPlusPres||null)}</td><td>${fmtPct(mPct)}</td>
-          <td>${fN(lLead||null)}</td><td>${fN(lLitePres||null)}</td><td>${fN(lPlusPres||null)}</td><td>${fmtPct(lPct)}</td>
-          <td>${grSpan(gr)}</td></tr>`;
-      });
-    }
-  });
-  html += `</tbody></table></div></div>`;
-  return html;
-}
-
-/* ──────────────────────────────────────────────────────
-   RM: multi-zone render
-────────────────────────────────────────────────────── */
-function renderRMHTML(allRows, filteredZones) {
-  const teamMap = window.__dt_getTeamMap();
-  let html = `<div class="dt-zone-pills">`;
-  filteredZones.forEach(z => {
-    const tmName = teamMap[z.tm]?.name || z.tm;
-    const zRows = allRows.filter(r => z.tls.includes(r.tlEmail));
-    html += `<div class="dt-zone-pill">
-      <div class="dt-zone-pill-name">${z.name}</div>
-      <div class="dt-zone-pill-count">${zRows.length}<span>/${z.tls.length}</span></div>
-      <div class="dt-zone-pill-tm">TM: ${tmName}</div>
-    </div>`;
-  });
-  html += `</div>`;
-  filteredZones.forEach(z => {
-    const tmName = teamMap[z.tm]?.name || z.tm;
-    const zRows = allRows.filter(r => z.tls.includes(r.tlEmail));
-    html += `<div class="dt-zone-section">
-      <div class="dt-zone-section-head">
-        <span>🗺 ${z.name}</span>
-        <span class="dt-zone-tm-label">TM: ${tmName}</span>
-        <span class="dt-zone-count">${zRows.length}/${z.tls.length} submitted</span>
-      </div>
-      ${renderViewerHTML(zRows, z.tls, "", true)}
-    </div>`;
-  });
-  return html;
-}
-</script>
-
-<!-- ── DAILY TRACK STYLES v2 ── -->
-<style>
-/* Page layout */
-.dt-page { display:flex; flex-direction:column; gap:1rem; }
-.dt-page-header { display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:10px; margin-bottom:0.25rem; }
-.dt-page-title { font-size:17px; font-weight:700; color:var(--text); }
-.dt-page-date  { font-size:12px; color:var(--muted); margin-top:2px; }
-.dt-save-status { font-size:12px; color:var(--muted); font-style:italic; }
-.dt-save-btn { background:var(--brand); color:#fff; border:none; padding:9px 22px; border-radius:var(--radius); font-family:var(--font); font-size:13px; font-weight:600; cursor:pointer; transition:opacity 0.15s; }
-.dt-save-btn:hover { opacity:0.86; }
-.dt-loading { color:var(--muted); font-size:13px; padding:28px 0; text-align:center; }
-
-/* Cards */
-.dt-card { background:var(--surface); border:1px solid var(--border); border-radius:var(--radius-lg); overflow:hidden; }
-.dt-card-head { display:flex; align-items:center; gap:10px; padding:13px 16px; border-bottom:1px solid var(--border); background:var(--bg); flex-wrap:wrap; }
-.dt-card-icon { font-size:16px; }
-.dt-card-title { font-size:14px; font-weight:700; color:var(--text); }
-.dt-formula-hint { font-size:11px; color:var(--muted); margin-left:auto; font-style:italic; }
-
-/* RPC row */
-.dt-rpc-grid { display:grid; grid-template-columns:1fr 1fr 1fr; gap:12px; padding:14px 16px; }
-.dt-col-group { display:flex; flex-direction:column; gap:6px; }
-.dt-col-label { font-size:10.5px; font-weight:700; text-transform:uppercase; letter-spacing:0.07em; padding:4px 10px; border-radius:20px; display:inline-block; width:fit-content; }
-.mtd-label  { background:#E6F1FB; color:#0C447C; }
-.lmtd-label { background:#EAF3DE; color:#27500A; }
-.gr-label   { background:#FAEEDA; color:#633806; display:flex; align-items:center; gap:4px; }
-.dt-field-wrap label { display:block; font-size:11px; font-weight:600; color:var(--muted); margin-bottom:4px; }
-.dt-inp { width:100%; padding:8px 10px; border:1px solid var(--border-strong); border-radius:var(--radius); font-family:var(--font); font-size:14px; font-weight:500; background:var(--bg); color:var(--text); box-sizing:border-box; transition:border-color 0.15s; }
-.dt-inp:focus { outline:none; border-color:var(--brand); box-shadow:0 0 0 3px rgba(192,57,43,0.08); }
-.dt-inp-sm { font-size:13px; padding:6px 8px; }
-.dt-calc-box { font-size:16px; font-weight:700; color:var(--brand); padding:8px 12px; background:var(--bg); border:1.5px dashed var(--border); border-radius:var(--radius); min-height:38px; display:flex; align-items:center; transition:color 0.2s; }
-.dt-auto-col .dt-col-label { background:#FEF6E8; color:#633806; }
-.dt-auto-tag { font-size:9px; font-weight:700; background:#FEF3CD; color:#7A4F00; padding:1px 6px; border-radius:4px; text-transform:uppercase; margin-left:4px; vertical-align:middle; }
-
-/* Table */
-.dt-conv-wrap { padding:0 0 4px; overflow-x:auto; }
-.dt-tbl { width:100%; border-collapse:collapse; font-size:12px; }
-.dt-tbl th { background:var(--bg); color:var(--muted); font-weight:700; font-size:10.5px; text-transform:uppercase; letter-spacing:0.05em; padding:8px 9px; border-bottom:1px solid var(--border); white-space:nowrap; text-align:center; }
-.dt-tbl td { padding:7px 9px; border-bottom:1px solid var(--border); color:var(--text); text-align:center; font-size:12.5px; vertical-align:middle; }
-.dt-tbl tr:last-child td { border-bottom:none; }
-.dt-row-head { text-align:left !important; font-weight:600; background:var(--surface); }
-.dt-group-head { text-align:center; }
-.mtd-head  { background:#EAF1FA !important; color:#0C447C !important; }
-.lmtd-head { background:#EAF3DE !important; color:#27500A !important; }
-.gr-head   { background:#FEF6E8 !important; color:#633806 !important; }
-.dt-auto-th { background:#FEF9F0; }
-.dt-total-row { background:#F8F6F2 !important; font-weight:600; }
-.dt-total-row td { border-top:2px solid var(--border) !important; }
-.dt-calc-inline { display:inline-block; font-size:12px; font-weight:600; color:var(--brand); min-width:30px; }
-/* Sticky TL column in viewer tables */
-.dt-sticky-col { position:sticky; left:0; z-index:2; background:var(--surface); text-align:left !important; font-weight:600; min-width:80px; box-shadow:2px 0 4px rgba(0,0,0,0.06); }
-
-/* Plan pills */
-.dt-plan-tag { display:inline-block; padding:2px 9px; border-radius:12px; font-size:11px; font-weight:700; white-space:nowrap; }
-.dt-plan-lite  { background:#E6F1FB; color:#0C447C; }
-.dt-plan-plus  { background:#EEEDFE; color:#3C3489; }
-.dt-plan-total { background:#F5F3EF; color:#3D3B36; }
-
-/* GR coloring */
-.dt-gr-pos  { color:#27500A !important; }
-.dt-gr-neg  { color:#A32D2D !important; }
-.dt-gr-zero { color:#854F0B !important; }
-.dt-gr-val  { font-weight:700; font-size:12px; }
-
-/* Viewer cards */
-.dt-view-card { background:var(--surface); border:1px solid var(--border); border-radius:var(--radius-lg); overflow:hidden; }
-.dt-view-card-title { display:flex; align-items:center; gap:8px; padding:11px 16px; font-size:13px; font-weight:700; color:var(--text); border-bottom:1px solid var(--border); background:var(--bg); }
-.dt-view-card .tbl-wrap { overflow-x:auto; -webkit-overflow-scrolling:touch; }
-.dt-view-tbl th { padding:7px 10px; }
-.dt-view-tbl td { padding:7px 10px; }
-.dt-null { color:#ccc; font-size:12px; }
-.dt-null-row { color:#bbb; font-style:italic; text-align:left; }
-
-/* Badges */
-.dt-badge { display:inline-block; padding:2px 10px; border-radius:20px; font-size:11px; font-weight:600; }
-.dt-badge-done { background:#EAF3DE; color:#27500A; }
-.dt-badge-pend { background:#FAEEDA; color:#633806; }
-
-/* Submission pills */
-.dt-sub-pills { display:flex; gap:8px; flex-wrap:wrap; margin-bottom:0.75rem; }
-.dt-pill { padding:4px 14px; border-radius:20px; font-size:12px; font-weight:600; border:1px solid var(--border); }
-.dt-pill-all  { background:#F5F3EF; color:var(--text); }
-.dt-pill-pend { background:#EAF3DE; color:#27500A; }
-
-/* Zone (RM) */
-.dt-zone-pills { display:flex; gap:10px; flex-wrap:wrap; margin-bottom:1rem; }
-.dt-zone-pill { flex:1; min-width:140px; max-width:200px; padding:14px 16px; background:var(--surface); border:1px solid var(--border); border-radius:var(--radius-lg); }
-.dt-zone-pill-name { font-size:11px; font-weight:700; color:var(--muted); text-transform:uppercase; letter-spacing:0.06em; margin-bottom:6px; }
-.dt-zone-pill-count { font-size:22px; font-weight:700; color:var(--text); }
-.dt-zone-pill-count span { font-size:13px; font-weight:500; color:var(--muted); }
-.dt-zone-pill-tm { font-size:12px; font-weight:600; color:#27500A; margin-top:4px; }
-.dt-zone-section { background:var(--surface); border:1px solid var(--border); border-radius:var(--radius-lg); overflow:hidden; margin-bottom:1rem; }
-.dt-zone-section-head { display:flex; align-items:center; gap:12px; padding:11px 16px; font-size:13px; font-weight:700; color:var(--text); background:var(--bg); border-bottom:1px solid var(--border); flex-wrap:wrap; }
-.dt-zone-tm-label { font-weight:500; color:var(--muted); font-size:12px; }
-.dt-zone-count { margin-left:auto; font-size:12px; color:var(--muted); font-weight:500; }
-.dt-zone-section .dt-view-card { border-radius:0; border:none; border-bottom:1px solid var(--border); }
-.dt-zone-section .dt-view-card:last-child { border-bottom:none; }
-
-@media (max-width:640px) {
-  .dt-rpc-grid { grid-template-columns:1fr 1fr; }
-  .dt-formula-hint { display:none; }
-  .dt-zone-pill { min-width:130px; }
-}
-</style>
-
-<script>
-</script>
 </body>
 </html>
-
