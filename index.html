@@ -80,10 +80,9 @@
 
   function getVisibleZones() {
     const all = getZones();
-    if (!currentUser) return all;
-    return DEMO_EMAILS.has(currentUser.email)
-      ? all.filter(z => z.name === "Demo")
-      : all.filter(z => z.name !== "Demo");
+    // Filter out any zone literally named "Demo" (placeholder) for all users.
+    // Demo accounts see the same real zones as everyone else.
+    return all.filter(z => z.name !== "Demo");
   }
 
   const PLAN_BG   = { "VIP Lite 3": "#E6F1FB", "VIP Lite 6": "#EAF3DE", "VIP Plus 3": "#FAEEDA", "VIP Plus 6": "#EEEDFE" };
@@ -397,7 +396,20 @@
       nav.innerHTML=`<button class="nav-btn active" data-section="tl">📋 My Pipeline</button><button class="nav-btn" data-section="weekly">📅 Weekly</button><button class="nav-btn" data-section="daily-track">📈 Daily Track</button>`;
     } else if (role==="tm") {
       const hasDirect = currentProfile.hasDirectReports;
-      nav.innerHTML=`<button class="nav-btn active" data-section="tm">📊 Zone Dashboard</button>${hasDirect?'<button class="nav-btn" data-section="tm-direct">📋 My Direct Pipeline</button>':''}<button class="nav-btn" data-section="weekly">📅 Weekly</button><button class="nav-btn" data-section="analytics">📊 Analytics</button><button class="nav-btn" data-section="leaderboard">🏆 Leaderboard</button><button class="nav-btn" data-section="history">📆 History</button><button class="nav-btn" data-section="daily-track">📈 Daily Track</button><button class="nav-btn" data-section="team-mgmt">👥 My Team</button>`;
+      nav.innerHTML=`
+        <button class="nav-btn active" data-section="tm">Today</button>
+        ${hasDirect?'<button class="nav-btn" data-section="tm-direct">My Pipeline</button>':''}
+        <button class="nav-btn" data-section="daily-track">Daily Track</button>
+        <button class="nav-btn" data-section="weekly">Weekly</button>
+        <div class="nav-more-wrap">
+          <button class="nav-btn nav-more-btn" id="nav-more-btn">More &#9662;</button>
+          <div class="nav-more-dropdown" id="nav-more-dropdown">
+            <button class="nav-dropdown-item" data-section="analytics">&#128202; Analytics</button>
+            <button class="nav-dropdown-item" data-section="leaderboard">&#127942; Leaderboard</button>
+            <button class="nav-dropdown-item" data-section="history">&#128198; History</button>
+            <button class="nav-dropdown-item" data-section="team-mgmt">&#128101; My Team</button>
+          </div>
+        </div>`;
     } else {
       nav.innerHTML=`
         <button class="nav-btn active" data-section="admin">Today</button>
@@ -1118,11 +1130,15 @@
       }
     }
 
-    // Guidance
+    // Guidance — only show card when there's something actionable
     const notes = getTLGuidance(mine);
-    document.getElementById("tl-guidance").innerHTML = notes.length
-      ? notes.map(n=>`<div class="guidance-note guidance-${n.type}"><span class="g-icon">${n.icon}</span><span>${n.text}</span></div>`).join("")
-      : `<div class="guidance-note guidance-success"><span class="g-icon">✅</span><span>All good! Keep maintaining your pipeline discipline.</span></div>`;
+    const guidanceCard = document.getElementById("tl-guidance-card");
+    if (notes.length) {
+      document.getElementById("tl-guidance").innerHTML = notes.map(n=>`<div class="guidance-note guidance-${n.type}"><span class="g-icon">${n.icon}</span><span>${n.text}</span></div>`).join("");
+      if (guidanceCard) guidanceCard.style.display = "block";
+    } else {
+      if (guidanceCard) guidanceCard.style.display = "none";
+    }
 
     // Postponed overdue alerts for TL
     renderPostponedAlerts("tl-overdue", mine);
@@ -1184,53 +1200,72 @@
     const achRev  = conv.reduce((a,e)=>a+(e.actualRevenue||e.revenue),0);
     const p = pct(conv.length,mine.length);
 
+    const submittedCount = zone.tls.filter(tlE=>allEntries.some(e=>e.tlEmail===tlE)).length;
+    const lost = mine.filter(e=>e.status==="lost");
+    const pending = mine.length - conv.length - lost.length;
+    const revPct = projRev ? Math.min(100,Math.round(achRev/projRev*100)) : null;
+    const revCol = revPct==null?"var(--blue)":revPct>=90?"var(--green)":revPct>=70?"var(--amber)":"var(--red)";
+    const adhCol = adherenceColor(p), adhBg = adherenceBg(p);
+    const zoneTarget = (targetsData[zone.name]||{}).daily||0;
+    const tgtPct = zoneTarget ? Math.min(100,Math.round(achRev/zoneTarget*100)) : null;
+    const tgtCol = tgtPct==null?"var(--blue)":tgtPct>=90?"var(--green)":tgtPct>=70?"var(--amber)":"var(--red)";
+
     document.getElementById("tm-metrics").innerHTML=`
-      <div class="metric"><div class="mlabel">Total Projected</div><div class="mval">${mine.length}</div></div>
-      <div class="metric"><div class="mlabel">Converted</div><div class="mval" style="color:#27500A">${conv.length}</div></div>
-      <div class="metric" style="background:${adherenceBg(p)};border-color:${adherenceColor(p)}40">
-        <div class="mlabel" style="color:${adherenceColor(p)}">Zone Adherence</div>
-        <div class="mval" style="color:${adherenceColor(p)}">${p}%</div>
-        <div class="msub" style="color:${adherenceColor(p)}">${adherenceLabel(p)}</div>
+      <div class="hero-kpi-strip">
+        <div class="hero-kpi hero-kpi-revenue">
+          <div class="hkpi-label">Revenue Achieved Today</div>
+          <div class="hkpi-value">${inr(achRev)}</div>
+          <div class="hkpi-sub">
+            ${zoneTarget
+              ? `<div class="hkpi-bar-bg"><div class="hkpi-bar-fill" style="width:${tgtPct}%;background:${tgtCol}"></div></div>
+                 <span style="color:${tgtCol};font-weight:700">${tgtPct}% of daily target</span> · Target ${inr(zoneTarget)}`
+              : `<span style="color:var(--green);font-weight:600">${conv.length} converted</span> &nbsp;·&nbsp; <span style="color:var(--faint)">${inr(projRev)} projected</span>`}
+          </div>
+        </div>
+        <div class="hero-kpi hero-kpi-pipeline">
+          <div class="hkpi-label">Zone Pipeline · ${submittedCount}/${zone.tls.length} TLs submitted</div>
+          <div class="hkpi-value">${mine.length}</div>
+          <div class="hkpi-sub">
+            <span style="color:var(--green);font-weight:600">${conv.length} converted</span>
+            &nbsp;·&nbsp;
+            <span style="color:var(--amber)">${pending} pending</span>
+            &nbsp;·&nbsp;
+            <span style="color:var(--red)">${lost.length} lost</span>
+          </div>
+        </div>
+        <div class="hero-kpi hero-kpi-adherence" style="background:${adhBg};border-color:${adhCol}30">
+          <div class="hkpi-label" style="color:${adhCol}">Zone Adherence</div>
+          <div class="hkpi-value" style="color:${adhCol}">${p}%</div>
+          <div class="hkpi-sub">
+            <div class="hkpi-bar-bg"><div class="hkpi-bar-fill" style="width:${p}%;background:${adhCol}"></div></div>
+            <span style="color:${adhCol};font-weight:700">${adherenceLabel(p)}</span>
+            &nbsp;·&nbsp; Target ≥ 80%
+          </div>
+        </div>
       </div>
-      <div class="metric"><div class="mlabel">Revenue Achieved</div><div class="mval sm" style="color:#27500A">${inr(achRev)}</div><div class="msub">of ${inr(projRev)}</div></div>
     `;
 
     const tm = getTeamMap();
-    // Forecast card for TM
+    // Forecast card for TM — 3 blocks only
     const tmForecastEl = document.getElementById("tm-forecast");
     if (tmForecastEl) {
       const af = calcForecast(mine);
       const lostToday = mine.filter(e=>e.status==="lost").length;
-      tmForecastEl.innerHTML = `<div class="forecast-strip">
+      tmForecastEl.innerHTML = `<div class="forecast-strip" style="grid-template-columns:repeat(3,1fr)">
         <div class="forecast-block">
-          <div class="forecast-label">🎯 Already Achieved</div>
+          <div class="forecast-label">Already Achieved</div>
           <div class="forecast-val" style="color:var(--green)">${inr(af.convRev)}</div>
-          <div class="forecast-sub">${conv.length} converted</div>
+          <div class="forecast-sub">${conv.length} converted · ${lostToday} lost</div>
         </div>
         <div class="forecast-block">
-          <div class="forecast-label">📈 Optimistic</div>
-          <div class="forecast-val" style="color:var(--blue)">${inr(af.optimistic)}</div>
-          <div class="forecast-sub">HOT + 50% WARM</div>
-        </div>
-        <div class="forecast-block">
-          <div class="forecast-label">📉 Conservative</div>
+          <div class="forecast-label">Conservative</div>
           <div class="forecast-val" style="color:var(--amber)">${inr(af.pessimistic)}</div>
-          <div class="forecast-sub">70% HOT only</div>
+          <div class="forecast-sub">${af.hotCount} HOT · 70% close rate</div>
         </div>
         <div class="forecast-block">
-          <div class="forecast-label">🔥 HOT Pending</div>
-          <div class="forecast-val">${af.hotCount}</div>
-          <div class="forecast-sub">${inr(af.hotRev)} at stake</div>
-        </div>
-        <div class="forecast-block">
-          <div class="forecast-label">♨️ WARM Pending</div>
-          <div class="forecast-val">${af.warmCount}</div>
-          <div class="forecast-sub">${inr(af.warmRev)} potential</div>
-        </div>
-        <div class="forecast-block">
-          <div class="forecast-label">❌ Lost Today</div>
-          <div class="forecast-val" style="color:var(--red)">${lostToday}</div>
-          <div class="forecast-sub">review tomorrow</div>
+          <div class="forecast-label">Optimistic</div>
+          <div class="forecast-val" style="color:var(--blue)">${inr(af.optimistic)}</div>
+          <div class="forecast-sub">${af.warmCount} WARM · HOT + 50% WARM</div>
         </div>
       </div>`;
     }
@@ -1240,13 +1275,25 @@
       const tc=te.filter(e=>e.status==="converted");
       const tp=pct(tc.length,te.length);
       const tRev=te.reduce((a,e)=>a+e.revenue,0), tAch=tc.reduce((a,e)=>a+(e.actualRevenue||e.revenue),0);
-      const signal=tp>=90?"🟢":tp>=80?"🟡":"🔴";
-      const cs=calcCommitmentScore(mine,tlEmail);
-      // TL revenue target (if TM set one)
       const myZoneT   = targetsData[zone.name] || {};
       const tlTargetD = ((myZoneT.tls||{})[tlEmail]||{}).daily || 0;
       const tlTdp     = tlTargetD ? Math.min(100,Math.round(tAch/tlTargetD*100)) : null;
       const tlTcol    = tlTdp!=null?(tlTdp>=90?"var(--green)":tlTdp>=70?"var(--amber)":"var(--red)"):"";
+
+      // TL has not submitted anything today
+      if (te.length === 0) {
+        return `<div class="tl-card" style="border-left:3px solid #9B9990;opacity:0.85">
+          <div class="tl-card-header">
+            <div><span class="tl-card-name">⬜ ${tl.name}</span>
+            <span class="adherence-badge" style="background:#F5F3EF;color:#9B9990">Not submitted</span></div>
+            <button class="btn-xs" style="background:#FAEEDA;color:#633806;border-color:#F5C89A;font-size:11px" onclick="openFlagModal('','${tl.name}','—','—')">💬 Ask</button>
+          </div>
+          <div style="font-size:12px;color:#9B9990;padding:4px 0">No projections submitted for today yet</div>
+        </div>`;
+      }
+
+      const signal=tp>=90?"🟢":tp>=80?"🟡":"🔴";
+      const cs=calcCommitmentScore(mine,tlEmail);
       return `<div class="tl-card" style="border-left:3px solid ${adherenceColor(tp)}">
         <div class="tl-card-header">
           <div><span class="tl-card-name">${signal} ${tl.name}</span>
@@ -1627,6 +1674,7 @@
       const zRev=ze.reduce((a,e)=>a+e.revenue,0), zAch=zc.reduce((a,e)=>a+(e.actualRevenue||e.revenue),0);
       const tm=getTeamMap()[z.tm];
       const atRisk=z.tls.filter(tlE=>{const te=allEntries.filter(e=>e.tlEmail===tlE);return te.length>0&&pct(te.filter(e=>e.status==="converted").length,te.length)<80;});
+      const submittedTLs=z.tls.filter(tlE=>allEntries.some(e=>e.tlEmail===tlE)).length;
       const tgt = targetsData[z.name] || {};
       const dp  = tgt.daily ? Math.min(100,Math.round(zAch/tgt.daily*100)) : 0;
       const dcol = dp>=90?"var(--green)":dp>=70?"var(--amber)":"var(--red)";
@@ -1637,7 +1685,7 @@
         </div>
         <div class="tl-bar-row">
           <div class="prog-bg" style="height:10px"><div class="prog-fill" style="width:${zp}%;background:${adherenceColor(zp)}"></div></div>
-          <span style="font-size:11px;color:#6B6860">${ze.length} IDs · ${zc.length} converted</span>
+          <span style="font-size:11px;color:#6B6860">${ze.length} IDs · ${zc.length} converted · <span style="${submittedTLs<z.tls.length?"color:#A32D2D;font-weight:600":"color:#27500A"}">${submittedTLs}/${z.tls.length} TLs submitted</span></span>
         </div>
         <div class="zone-rev-row"><span>${inr(zAch)}<span style="color:#9B9990;font-size:11px"> achieved</span></span><span style="color:#9B9990;font-size:12px">of ${inr(zRev)}</span></div>
         ${tgt.daily ? `<div class="target-progress-row" style="margin-top:8px">
@@ -3864,7 +3912,6 @@ tr:hover td { background: var(--surface-2); }
 
     <!-- ─── TL SECTION ─── -->
     <div id="section-tl" class="section">
-      <div id="tl-commitment"></div>
 
       <div class="card">
         <div class="card-title">Submit Projection</div>
@@ -3927,7 +3974,7 @@ tr:hover td { background: var(--surface-2); }
         </div>
       </div>
 
-      <div id="tl-guidance-card" class="card" style="padding:0.75rem 1rem">
+      <div id="tl-guidance-card" class="card" style="padding:0.75rem 1rem;display:none">
         <div class="card-title" style="margin-bottom:0.5rem">Smart Guidance</div>
         <div id="tl-guidance" class="guidance-wrap"></div>
       </div>
@@ -3963,6 +4010,8 @@ tr:hover td { background: var(--surface-2); }
           </table>
         </div>
       </div>
+
+      <div id="tl-commitment"></div>
     </div>
 
     <!-- ─── TM SECTION ─── -->
@@ -3975,10 +4024,7 @@ tr:hover td { background: var(--surface-2); }
           <button class="btn-export" onclick="openExportRangeModal()">📅 Range</button>
         </div>
       </div>
-      <div class="metrics" id="tm-metrics"></div>
-      <div class="chart-row">
-        <div class="chart-box" style="grid-column:1/-1"><div class="chart-title">TL-wise Projection vs Conversion — Today</div><div class="chart-canvas-wrap"><canvas id="tm-bar"></canvas></div></div>
-      </div>
+      <div id="tm-metrics" style="margin-bottom:0.75rem"></div>
       <div id="tm-forecast" style="margin-bottom:1rem"></div>
       <div id="tm-overdue"></div>
       <div id="tm-postponed-due"></div>
@@ -3986,6 +4032,9 @@ tr:hover td { background: var(--surface-2); }
       <div class="card">
         <div class="card-title">TL Performance Signals</div>
         <div id="tm-tl-cards"></div>
+      </div>
+      <div class="chart-row">
+        <div class="chart-box" style="grid-column:1/-1"><div class="chart-title">TL-wise Projection vs Conversion — Today</div><div class="chart-canvas-wrap"><canvas id="tm-bar"></canvas></div></div>
       </div>
       <div class="card">
         <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px;margin-bottom:4px">
@@ -4011,19 +4060,25 @@ tr:hover td { background: var(--surface-2); }
       <!-- Secondary metrics row -->
       <div class="metrics" id="admin-metrics" style="margin-bottom:0.75rem"></div>
 
-      <!-- Zone Performance — primary content -->
-      <div class="chart-row" style="margin-bottom:0.75rem">
-        <div class="chart-box" style="grid-column:1/-1"><div class="chart-title">Zone-wise Projection vs Conversion — Today</div><div class="chart-canvas-wrap"><canvas id="admin-bar"></canvas></div></div>
-      </div>
-      <div id="admin-mtd"></div>
-      <div id="admin-forecast"></div>
+      <!-- Alerts first — need immediate attention -->
       <div id="admin-overdue"></div>
       <div id="admin-postponed-due"></div>
       <div id="admin-carry-forward"></div>
-      <div class="card">
+
+      <!-- Zone Performance — primary content -->
+      <div class="card" style="margin-bottom:0.75rem">
         <div class="card-title">Zone Performance — Today</div>
         <div class="zone-cards" id="admin-zones"></div>
       </div>
+
+      <!-- Chart — visual summary of zones -->
+      <div class="chart-row" style="margin-bottom:0.75rem">
+        <div class="chart-box" style="grid-column:1/-1"><div class="chart-title">Zone-wise Projection vs Conversion — Today</div><div class="chart-canvas-wrap"><canvas id="admin-bar"></canvas></div></div>
+      </div>
+
+      <!-- MTD and Forecast — context, not primary action -->
+      <div id="admin-mtd"></div>
+      <div id="admin-forecast"></div>
       <div style="margin-bottom:0.75rem;border:1px solid var(--border);border-radius:var(--radius-lg);overflow:hidden">
         <div onclick="toggleAccordion('admin-pipeline-body')" style="display:flex;align-items:center;justify-content:space-between;padding:10px 14px;background:var(--surface);cursor:pointer;user-select:none;border-bottom:1px solid var(--border)">
           <span style="font-size:10.5px;font-weight:700;color:var(--faint);text-transform:uppercase;letter-spacing:0.07em">Full Pipeline — All Zones</span>
