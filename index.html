@@ -302,6 +302,53 @@
 
   window.doLogout = async function() { await signOut(auth); };
 
+  // Hook: called by renderCurrentView after every render during a refresh
+  window._restoreAccordionsAfterRender = null;
+
+  window.doRefresh = async function() {
+    const btn = document.getElementById("refresh-btn");
+    if (btn) { btn.textContent = "↻ Refreshing…"; btn.disabled = true; }
+    try {
+      // Save which accordions are open before re-render
+      const openAccordions = [];
+      document.querySelectorAll('[id$="-body"]').forEach(el => {
+        if (el.style.display === "block") openAccordions.push(el.id);
+      });
+      function restoreAccordions() {
+        openAccordions.forEach(id => {
+          const body  = document.getElementById(id);
+          const arrow = document.getElementById(id + "-arrow");
+          if (body)  body.style.display = "block";
+          if (arrow) arrow.style.transform = "rotate(0deg)";
+        });
+      }
+      window._restoreAccordionsAfterRender = restoreAccordions;
+
+      // Re-fetch pastData FIRST — needed by Postponed and Carry-Forward accordions on all views
+      await loadPastData();
+
+      // Re-subscribe today's data (onSnapshot fires → renderCurrentView → restores accordions)
+      if (unsubscribe) { unsubscribe(); unsubscribe = null; }
+      subscribeEntries();
+
+      // Selectively reset only caches not needed by the current view
+      const s = currentSection;
+      analyticsData = []; analyticsLoaded = false;
+      if (s !== "weekly" && s !== "history") weeklyData = [];
+      mtdData = []; mtdLoaded = false;
+
+      // Re-fetch extras needed for current section
+      if (s === "weekly" || s === "history") await loadWeeklyData();
+      if (s === "admin" || s === "performance-hub") await loadMTDData();
+
+      // Clear restore hook after renders complete
+      setTimeout(() => { window._restoreAccordionsAfterRender = null; }, 3000);
+
+      showToast("Data refreshed ✓", "success");
+    } catch(e) { showToast("Refresh failed: " + e.message, "error"); }
+    if (btn) { btn.textContent = "↻ Refresh"; btn.disabled = false; }
+  };
+
   /* ── REALTIME SUBSCRIPTION ── */
   function subscribeEntries() {
     const q = query(collection(db,"entries"),where("date","==",todayStr()));
@@ -459,6 +506,11 @@
 
   function renderCurrentView() {
     if (currentSection) renderSection(currentSection);
+    // Restore any accordions that were open before a refresh
+    // setTimeout(0) ensures this runs after the synchronous render and new DOM elements exist
+    if (window._restoreAccordionsAfterRender) {
+      setTimeout(window._restoreAccordionsAfterRender, 0);
+    }
   }
 
   function renderSection(s) {
@@ -1364,7 +1416,7 @@
           <td>${inr(e.revenue)}</td>
           <td><span class="slot-pill">${e.slot}</span></td>
           <td><span class="status-pill ${statusClass(e.status)}">${statusLabel(e.status)}</span></td>
-          <td class="actions">${e.isDirect&&e.status==="pending"?`<button class="btn-xs btn-conv" onclick="markDirectStatus('${e.id}','converted')">&#10003;</button><button class="btn-xs btn-lost" onclick="markDirectStatus('${e.id}','lost')">&#10007;</button><button class="btn-xs btn-postpone" onclick="markDirectStatus('${e.id}','postponed')">&#9201;</button>`:""}</td>
+          <td class="actions">${(e.isDirect||e.addedByTM)&&e.status==="pending"?`<button class="btn-xs btn-conv" onclick="markDirectStatus('${e.id}','converted')">&#10003;</button><button class="btn-xs btn-lost" onclick="markDirectStatus('${e.id}','lost')">&#10007;</button><button class="btn-xs btn-postpone" onclick="markDirectStatus('${e.id}','postponed')">&#9201;</button>`:e.status!=="pending"?"":`<span style="font-size:10px;color:var(--faint)">TL updates</span>`}</td>
         </tr>`;}).join("")
       : `<tr><td colspan="10" class="empty-cell">No projections submitted yet</td></tr>`;
   }
@@ -1456,12 +1508,16 @@
       </td>
     </tr>`).join("");
     el.innerHTML = `<div style="margin-bottom:0.75rem;border:1px solid #B5D4F4;border-radius:var(--radius-lg);overflow:hidden">
-      <div onclick="toggleAccordion('${uid}')" style="display:flex;align-items:center;justify-content:space-between;padding:10px 14px;background:#F5F9FF;cursor:pointer;user-select:none">
-        <div style="display:flex;align-items:center;gap:10px">
+      <div style="display:flex;align-items:center;justify-content:space-between;padding:10px 14px;background:#F5F9FF;user-select:none">
+        <div onclick="toggleAccordion('${uid}')" style="display:flex;align-items:center;gap:10px;cursor:pointer;flex:1">
           <span style="font-size:13px;font-weight:700;color:#0C447C">📅 Postponed — Due Today</span>
           <span style="font-size:11px;background:#E6F1FB;color:#0C447C;padding:2px 10px;border-radius:20px;font-weight:700">${pd.length} case${pd.length>1?"s":""}</span>
         </div>
-        <span id="${uid}-arrow" style="font-size:12px;color:#0C447C;transition:transform 0.2s">▼</span>
+        <div style="display:flex;align-items:center;gap:6px">
+          <button onclick="exportPostponedDueToday()" style="font-size:11px;padding:3px 10px;border-radius:12px;border:1px solid #B5D4F4;background:#E6F1FB;color:#0C447C;cursor:pointer;font-weight:500">📥 Export</button>
+          <button onclick="refreshPostponedDueToday('${containerId}')" style="font-size:11px;padding:3px 10px;border-radius:12px;border:1px solid #B5D4F4;background:white;color:#0C447C;cursor:pointer;font-weight:600">↻</button>
+          <span id="${uid}-arrow" onclick="toggleAccordion('${uid}')" style="font-size:12px;color:#0C447C;transition:transform 0.2s;cursor:pointer;padding:0 2px">▼</span>
+        </div>
       </div>
       <div id="${uid}" style="display:none;background:var(--surface);border-top:1px solid #B5D4F4">
         <div style="padding:8px 14px 4px;font-size:11px;color:var(--muted)">These postponed cases are due today. Update their status.</div>
@@ -1474,6 +1530,49 @@
       </div>
     </div>`;
   }
+
+  window.refreshPostponedDueToday = async function(containerId) {
+    const btn = event.target;
+    btn.textContent = "↻"; btn.disabled = true; btn.style.opacity = "0.5";
+    try {
+      // Re-fetch past 14 days so postponed cases are current
+      const today = todayStr();
+      const past14 = Array.from({length:14},(_,i)=>{const d=new Date();d.setDate(d.getDate()-i-1);return d.toISOString().split("T")[0];});
+      const q = query(collection(db,"entries"), where("date","in",past14));
+      const snap = await getDocs(q);
+      pastData = snap.docs.map(d=>({id:d.id,...d.data()}));
+      pastDataLoaded = true;
+      renderPostponedDueToday(containerId);
+      // Re-open accordion after refresh
+      const uid = containerId+"-body";
+      const body = document.getElementById(uid);
+      if (body) body.style.display = "block";
+      showToast("Postponed cases refreshed ✓","success");
+    } catch(e) { showToast("Refresh failed: "+e.message,"error"); }
+  };
+
+  window.exportPostponedDueToday = function() {
+    const today = todayStr();
+    const pool = pastDataLoaded ? pastData : weeklyData;
+    let pd = pool.filter(e=>{
+      if(e.status!=="postponed"||!e.postponedTo||e.date===today) return false;
+      return e.postponedTo.substring(0,10)<=today;
+    });
+    const role = currentProfile.role;
+    if(role==="tl") pd=pd.filter(e=>e.tlEmail===currentUser.email);
+    else if(role==="tm"){const z=getMyZone();if(z)pd=pd.filter(e=>z.tls.includes(e.tlEmail)||e.tlEmail===currentUser.email);}
+    if(!pd.length){showToast("No postponed cases to export","error");return;}
+    const rows=pd.map(e=>({
+      "TL":e.tlName||"—","Member ID":e.memberId,"Member Name":e.memberName,
+      "Plan":e.plan,"Scheduled":e.postponedTo||"—","Reason":e.postponeNote||"—",
+      "Zone":e.zone||"—","Projected Revenue":e.revenue,"Status":"Postponed Due Today",
+    }));
+    const ws=XLSX.utils.json_to_sheet(rows);
+    const wb=XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb,ws,"Postponed Due Today");
+    XLSX.writeFile(wb,`Postponed_Due_Today_${currentProfile.name}_${today}.xlsx`);
+    showToast("Exported "+pd.length+" cases ✓","success");
+  };
 
   /* -- TM DIRECT PIPELINE RENDER -- */
   function renderTMDirect() {
@@ -3363,6 +3462,9 @@ body { font-family: var(--font); background: var(--bg); color: var(--text); font
 .btn-action:hover { background: var(--bg); color: var(--text); border-color: var(--border-strong); }
 .btn-chat { background: var(--purple-bg); color: var(--purple); border-color: var(--purple-border); }
 .btn-pw   { background: var(--bg); }
+.btn-refresh { background: var(--bg); color: var(--text); font-weight: 600; letter-spacing: 0.01em; }
+.btn-refresh:hover { background: var(--text); color: white; }
+.btn-refresh:disabled { opacity: 0.5; cursor: not-allowed; }
 
 /* ── LAYOUT ── */
 .main { padding: 1rem 1.25rem; max-width: 1240px; margin: 0 auto; }
@@ -3902,6 +4004,7 @@ tr:hover td { background: var(--surface-2); }
     <span id="user-badge" class="badge"></span>
     <div id="main-nav"></div>
     <div class="topbar-actions">
+      <button class="btn-action btn-refresh" id="refresh-btn" onclick="doRefresh()" title="Refresh data">↻ Refresh</button>
       <button class="btn-action btn-chat" id="chat-toggle-btn" onclick="toggleChatbot()">💬 Assistant</button>
       <button class="btn-action btn-pw" onclick="openModal('pw')">🔑 Password</button>
       <button class="btn-action" onclick="doLogout()">Sign out</button>
