@@ -4696,19 +4696,26 @@ tr:hover td { background: var(--surface-2); }
 // even if the ES module hasn't finished loading yet.
 function doLogin() {
   if (window._doLogin) { window._doLogin(); return; }
-  // Module not ready yet — wait up to 5s and retry
+  // Module not ready yet — wait up to 8s and retry
   const btn = document.getElementById("login-btn");
-  if (btn) { btn.textContent = "Loading…"; btn.disabled = true; }
+  if (btn) { btn.textContent = "Connecting…"; btn.disabled = true; }
   let tries = 0;
   const poll = setInterval(() => {
     tries++;
     if (window._doLogin) {
       clearInterval(poll);
       window._doLogin();
-    } else if (tries > 50) {
+    } else if (tries > 80) {
       clearInterval(poll);
-      alert("App failed to load. Please hard-refresh (Ctrl+Shift+R) and try again.");
       if (btn) { btn.textContent = "Sign In →"; btn.disabled = false; }
+      // Check if running as local file
+      if (window.location.protocol === "file:") {
+        const t = document.getElementById("toast");
+        if (t) { t.textContent = "⚠️ Open from your deployed URL, not as a local file."; t.className = "toast toast-error show"; setTimeout(()=>t.classList.remove("show"),6000); }
+      } else {
+        const t = document.getElementById("toast");
+        if (t) { t.textContent = "Failed to connect. Hard-refresh (Ctrl+Shift+R) and try again."; t.className = "toast toast-error show"; setTimeout(()=>t.classList.remove("show"),6000); }
+      }
     }
   }, 100);
 }
