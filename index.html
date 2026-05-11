@@ -139,6 +139,7 @@
   let selectedWeekOffset=0;
   let mtdData=[], mtdLoaded=false;
   let pastData=[], pastDataLoaded=false; // last 14 days — for carry-forward & postponed-due-today
+  let pastConvertedToday=[]; // old IDs (projected prior days) converted TODAY — for correct today revenue
   let paList=[];
   let dataToDelete=[];
   let analyticsData=[], analyticsLoaded=false, analyticsRange={from:"",to:""};
@@ -148,6 +149,11 @@
   const todayStr = () => new Date().toISOString().split("T")[0];
   const pct = (a,b) => b ? Math.round(a/b*100) : 0;
   const inr = n => "₹" + Number(n||0).toLocaleString("en-IN");
+
+  // Returns revenue from old-day entries converted TODAY, optionally filtered by predicate
+  function getPastConvertedTodayRev(filterFn) {
+    return pastConvertedToday.filter(filterFn||(()=>true)).reduce((a,e)=>a+(e.actualRevenue||e.revenue),0);
+  }
   const statusClass = s => s==="converted"?"s-converted":s==="lost"?"s-lost":s==="postponed"?"s-postponed":"s-pending";
   const statusLabel = s => s==="converted"?"Converted":s==="lost"?"Lost":s==="postponed"?"Postponed":"Pending";
   const planPill = p => `<span class="plan-pill" style="background:${PLAN_BG[p]||"#eee"};color:${PLAN_TEXT[p]||"#333"}">${p}</span>`;
@@ -227,6 +233,8 @@
     // Sync PA dropdown into unplanned modal whenever it opens
     if (type==="unplanned") {
       renderPADropdown();
+      const ud = document.getElementById("m-unplanned-date");
+      if (ud) { ud.max = todayStr(); ud.value = todayStr(); }
     }
   };
 
@@ -245,6 +253,7 @@
      "m-pw-current","m-pw-new","m-pw-confirm","m-lost-note","m-lost-other"].forEach(id=>{const el=document.getElementById(id);if(el)el.value="";});
     const lostOtherWrap=document.getElementById("lost-other-wrap"); if(lostOtherWrap) lostOtherWrap.style.display="none";
     const unPa = document.getElementById("m-unplanned-pa"); if(unPa) unPa.value="";
+    const unDate = document.getElementById("m-unplanned-date"); if(unDate) { unDate.max=todayStr(); unDate.value=todayStr(); }
     const lostSel = document.getElementById("m-lost-reason"); if(lostSel) lostSel.value="";
     const uPlan   = document.getElementById("m-unplanned-plan"); if(uPlan) uPlan.value="";
   };
@@ -432,6 +441,9 @@
       const snap = await getDocs(q);
       pastData = snap.docs.map(d=>({id:d.id,...d.data()}));
       pastDataLoaded = true;
+      // Entries projected on prior days but converted today — used for correct today revenue
+      pastConvertedToday = pastData.filter(e=>e.status==="converted"&&e.convertedAt===todayStr());
+      renderCurrentView();
     } catch(e) { console.error("Past data:",e); }
   }
 
@@ -621,24 +633,28 @@
     const remark = document.getElementById("f-remark").value.trim();
     const paEl  = document.getElementById("f-pa");
     const paName = paEl ? paEl.value : "";
+    // Activation date — defaults to today, can be backdated for missed entries
+    const actDateEl = document.getElementById("f-date");
+    const entryDate = (actDateEl && actDateEl.value) ? actDateEl.value : todayStr();
 
     if (paName==="__manage__") { openPAManager(); return; }
     if (!mid||!mname||!plan) { showToast("Member ID, Name and Plan are required","error"); return; }
     if (!paName) { showToast("Please select a PA / Calling Agent","error"); return; }
     if (rev<=0) { showToast("Please enter expected revenue","error"); return; }
 
-    const exists = allEntries.find(e=>e.memberId===mid&&e.tlEmail===currentUser.email&&e.date===todayStr());
-    if (exists) { showToast("This Member ID is already in today's pipeline","error"); return; }
-    // Warn if same member ID exists under a different TL today
+    const pool = entryDate === todayStr() ? allEntries : [...allEntries, ...pastData];
+    const exists = pool.find(e=>e.memberId===mid&&e.tlEmail===currentUser.email&&e.date===entryDate);
+    if (exists) { showToast("This Member ID is already in your pipeline for "+entryDate,"error"); return; }
+    // Warn if same member ID exists under a different TL for same date
     const crossDup = allEntries.find(e=>e.memberId===mid&&e.tlEmail!==currentUser.email&&e.date===todayStr());
-    if (crossDup) { if(!confirm(`⚠️ Member ID ${mid} is already in ${crossDup.tlName}'s pipeline today. Add anyway?`)) return; }
+    if (crossDup && entryDate===todayStr()) { if(!confirm(`⚠️ Member ID ${mid} is already in ${crossDup.tlName}'s pipeline today. Add anyway?`)) return; }
 
     setLoading(true);
     try {
       await addDoc(collection(db,"entries"),{
         tlEmail:currentUser.email, tlName:currentProfile.name,
         tmEmail:currentProfile.tm||"", zone:currentProfile.zone,
-        date:todayStr(), memberId:mid, memberName:mname,
+        date:entryDate, memberId:mid, memberName:mname,
         plan, revenue:rev, remark, paName, slot:currentSlot,
         status:"pending", heat, isUnplanned:false,
         createdAt:serverTimestamp(), submittedSlot:currentSlot,
@@ -646,7 +662,8 @@
       ["f-id","f-name","f-rev","f-remark"].forEach(i=>{const el=document.getElementById(i);if(el)el.value="";});
       document.getElementById("f-plan").value="";
       if(paEl) paEl.value="";
-      showToast("Entry added successfully ✓","success");
+      if(actDateEl) actDateEl.value = todayStr();
+      showToast("Entry added ✓"+(entryDate!==todayStr()?" (for "+entryDate+")"):"","success");
     } catch(e) { showToast("Failed: "+e.message,"error"); }
     setLoading(false);
   };
@@ -687,7 +704,7 @@
     if (!currentProfile || currentProfile.role !== "tm") return;
     const tlSel = document.getElementById("absent-tl-select");
     const tlEmail = tlSel ? tlSel.value : "";
-    if (!tlEmail) { showToast("Please select the absent TL","error"); return; }
+    if (!tlEmail) { showToast("Please select the TL","error"); return; }
     const zone = getMyZone(); if (!zone) return;
     const tm = getTeamMap();
     const tlProfile = tm[tlEmail];
@@ -698,24 +715,32 @@
     const heat  = document.getElementById("abtl-f-heat").value;
     const rev   = parseInt(document.getElementById("abtl-f-rev").value)||0;
     const remark= document.getElementById("abtl-f-remark").value.trim();
+    // Activation date — defaults to today, can be backdated
+    const actDateEl = document.getElementById("abtl-f-date");
+    const entryDate = (actDateEl && actDateEl.value) ? actDateEl.value : todayStr();
     if(!mid||!mname||!plan){showToast("Member ID, Name and Plan are required","error");return;}
     if(rev<=0){showToast("Please enter expected revenue","error");return;}
-    const exists = allEntries.find(e=>e.memberId===mid&&e.tlEmail===tlEmail&&e.date===todayStr());
-    if(exists){showToast("This Member ID already exists under "+tlProfile.name+"'s pipeline today","error");return;}
+    // Check duplicate for the chosen date (search allEntries for today, pastData for past dates)
+    const pool = entryDate === todayStr() ? allEntries : [...allEntries, ...pastData];
+    const exists = pool.find(e=>e.memberId===mid&&e.tlEmail===tlEmail&&e.date===entryDate);
+    if(exists){showToast("This Member ID already exists under "+tlProfile.name+"'s pipeline for "+entryDate,"error");return;}
     setLoading(true);
     try {
       await addDoc(collection(db,"entries"),{
         tlEmail:tlEmail, tlName:tlProfile.name,
         tmEmail:currentUser.email, zone:zone.name,
-        date:todayStr(), memberId:mid, memberName:mname,
+        date:entryDate, memberId:mid, memberName:mname,
         plan, revenue:rev, remark, paName:"(TM on behalf)",
         slot:currentSlot, status:"pending", heat, isUnplanned:false,
         addedByTM:true, addedByTMName:currentProfile.name,
         createdAt:serverTimestamp(), submittedSlot:currentSlot,
       });
+      // Clear only the per-projection fields — keep TL selected for multiple entries
       ["abtl-f-id","abtl-f-name","abtl-f-rev","abtl-f-remark"].forEach(id=>{const el=document.getElementById(id);if(el)el.value="";});
       const ps=document.getElementById("abtl-f-plan"); if(ps) ps.value="";
-      showToast("Projection added for "+tlProfile.name+" ✓","success");
+      // Reset date back to today
+      if(actDateEl) actDateEl.value = todayStr();
+      showToast("Projection added for "+tlProfile.name+" ✓ ("+entryDate+")","success");
     } catch(e){showToast("Failed: "+e.message,"error");}
     setLoading(false);
   };
@@ -754,12 +779,18 @@
     if (!planSold) { showToast("Please select the plan that was sold","error"); return; }
     setLoading(true);
     try {
-      const entry = allEntries.find(e=>e.id===id);
+      const entry = allEntries.find(e=>e.id===id) || pastData.find(e=>e.id===id);
       const fromStatus = entry ? entry.status : "pending";
-      const updateData = {status:"converted",actualRevenue:actualRev,planSold:planSold,updatedAt:serverTimestamp()};
+      const updateData = {status:"converted",actualRevenue:actualRev,planSold:planSold,convertedAt:todayStr(),updatedAt:serverTimestamp()};
       if (entry && entry.plan !== planSold) updateData.planOriginal = entry.plan;
       await updateDoc(doc(db,"entries",id),updateData);
       await writeStatusHistory(id, fromStatus, "converted", {actualRevenue:actualRev, planSold});
+      // If entry was from pastData (old ID), update in-memory and refresh pastConvertedToday
+      const pIdx = pastData.findIndex(e=>e.id===id);
+      if (pIdx>=0) {
+        pastData[pIdx] = {...pastData[pIdx], ...updateData, updatedAt:{seconds:Date.now()/1000}};
+        pastConvertedToday = pastData.filter(e=>e.status==="converted"&&e.convertedAt===todayStr());
+      }
       showToast("Converted! "+planSold+" · "+inr(actualRev),"success");
     } catch(e) { showToast("Update failed","error"); }
     setLoading(false); closeModal("convert"); loadWeeklyData();
@@ -820,6 +851,8 @@
     const remark = document.getElementById("m-unplanned-remark").value.trim();
     const paEl   = document.getElementById("m-unplanned-pa");
     const paName = paEl ? paEl.value : "";
+    const actDateEl = document.getElementById("m-unplanned-date");
+    const entryDate = (actDateEl && actDateEl.value) ? actDateEl.value : todayStr();
     if (paName === "__manage__") { openPAManager(); return; }
     if (!mid||!mname||!plan)     { showToast("Member ID, Name and Plan are required","error"); return; }
     if (!paName)                  { showToast("Please select a PA / Calling Agent","error"); return; }
@@ -829,12 +862,12 @@
       await addDoc(collection(db,"entries"),{
         tlEmail:currentUser.email, tlName:currentProfile.name,
         tmEmail:currentProfile.tm||"", zone:currentProfile.zone,
-        date:todayStr(), memberId:mid, memberName:mname,
+        date:entryDate, memberId:mid, memberName:mname,
         plan, revenue:rev, remark, paName, slot:currentSlot,
         status:"pending", isUnplanned:true,
         createdAt:serverTimestamp(), submittedSlot:currentSlot,
       });
-      showToast("Unplanned case added!","success");
+      showToast("Unplanned case added!"+(entryDate!==todayStr()?" (for "+entryDate+")"):"","success");
     } catch(e) { showToast("Failed: "+e.message,"error"); }
     setLoading(false); closeModal("unplanned");
   };
@@ -1063,17 +1096,22 @@
 
   /* ── TL RENDER ── */
   function renderTL() {
+    // Initialize activation date field with today's date and max=today
+    const fDateEl = document.getElementById("f-date");
+    if (fDateEl) { fDateEl.max = todayStr(); if (!fDateEl.value) fDateEl.value = todayStr(); }
     const mine = allEntries.filter(e=>e.tlEmail===currentUser.email);
     const conv  = mine.filter(e=>e.status==="converted");
     const lost  = mine.filter(e=>e.status==="lost");
     const projRev = mine.reduce((a,e)=>a+e.revenue,0);
-    const achRev  = conv.reduce((a,e)=>a+(e.actualRevenue||e.revenue),0);
+    const pastRev = getPastConvertedTodayRev(e=>e.tlEmail===currentUser.email);
+    const achRev  = conv.reduce((a,e)=>a+(e.actualRevenue||e.revenue),0) + pastRev;
+    const pastConvCount = pastConvertedToday.filter(e=>e.tlEmail===currentUser.email).length;
     const p  = pct(conv.length,mine.length);
     const revPct = projRev?Math.round(achRev/projRev*100):0;
 
     document.getElementById("tl-metrics").innerHTML=`
       <div class="metric"><div class="mlabel">Projected IDs</div><div class="mval">${mine.length}</div></div>
-      <div class="metric"><div class="mlabel">Converted</div><div class="mval" style="color:#27500A">${conv.length}</div></div>
+      <div class="metric"><div class="mlabel">Converted</div><div class="mval" style="color:#27500A">${conv.length}${pastConvCount>0?`<span style="font-size:10px;color:#27500A;margin-left:4px">(+${pastConvCount} old)</span>`:""}</div></div>
       <div class="metric"><div class="mlabel">Lost</div><div class="mval" style="color:#A32D2D">${lost.length}</div></div>
       <div class="metric"><div class="mlabel">Pending</div><div class="mval">${mine.length-conv.length-lost.length}</div></div>
       <div class="metric" style="background:${adherenceBg(p)};border-color:${adherenceColor(p)}40">
@@ -1082,7 +1120,7 @@
         <div class="msub" style="color:${adherenceColor(p)}">${adherenceLabel(p)}</div>
       </div>
       <div class="metric"><div class="mlabel">Proj. Revenue</div><div class="mval sm">${inr(projRev)}</div></div>
-      <div class="metric"><div class="mlabel">Revenue Achieved</div><div class="mval sm" style="color:#27500A">${inr(achRev)}</div></div>
+      <div class="metric"><div class="mlabel">Revenue Achieved</div><div class="mval sm" style="color:#27500A">${inr(achRev)}${pastRev>0?`<div style="font-size:10px;color:#27500A;margin-top:2px">incl. ${inr(pastRev)} old IDs</div>`:""}</div></div>
       <div class="metric"><div class="mlabel">Rev. Achievement</div><div class="mval" style="color:${adherenceColor(revPct)}">${revPct}%</div></div>
     `;
 
@@ -1249,7 +1287,8 @@
     const mine = [...tlEntries, ...directEntries];
     const conv  = mine.filter(e=>e.status==="converted");
     const projRev = mine.reduce((a,e)=>a+e.revenue,0);
-    const achRev  = conv.reduce((a,e)=>a+(e.actualRevenue||e.revenue),0);
+    const pastRev = getPastConvertedTodayRev(e=>zone.tls.includes(e.tlEmail)||e.tlEmail===currentUser.email);
+    const achRev  = conv.reduce((a,e)=>a+(e.actualRevenue||e.revenue),0) + pastRev;
     const p = pct(conv.length,mine.length);
 
     const submittedCount = zone.tls.filter(tlE=>allEntries.some(e=>e.tlEmail===tlE)).length;
@@ -1270,8 +1309,8 @@
           <div class="hkpi-sub">
             ${zoneTarget
               ? `<div class="hkpi-bar-bg"><div class="hkpi-bar-fill" style="width:${tgtPct}%;background:${tgtCol}"></div></div>
-                 <span style="color:${tgtCol};font-weight:700">${tgtPct}% of daily target</span> · Target ${inr(zoneTarget)}`
-              : `<span style="color:var(--green);font-weight:600">${conv.length} converted</span> &nbsp;·&nbsp; <span style="color:var(--faint)">${inr(projRev)} projected</span>`}
+                 <span style="color:${tgtCol};font-weight:700">${tgtPct}% of daily target</span> · Target ${inr(zoneTarget)}${pastRev>0?` <span style="color:#27500A;font-size:10px">(incl. ${inr(pastRev)} old IDs)</span>`:""}`
+              : `<span style="color:var(--green);font-weight:600">${conv.length} converted</span> &nbsp;·&nbsp; <span style="color:var(--faint)">${inr(projRev)} projected</span>${pastRev>0?` &nbsp;·&nbsp; <span style="color:#27500A;font-size:10px">${inr(pastRev)} from old IDs</span>`:""}`}
           </div>
         </div>
         <div class="hero-kpi hero-kpi-pipeline">
@@ -1326,7 +1365,8 @@
       const te=mine.filter(e=>e.tlEmail===tlEmail&&!e.isDirect);
       const tc=te.filter(e=>e.status==="converted");
       const tp=pct(tc.length,te.length);
-      const tRev=te.reduce((a,e)=>a+e.revenue,0), tAch=tc.reduce((a,e)=>a+(e.actualRevenue||e.revenue),0);
+      const tlPastRev=getPastConvertedTodayRev(e=>e.tlEmail===tlEmail);
+      const tRev=te.reduce((a,e)=>a+e.revenue,0), tAch=tc.reduce((a,e)=>a+(e.actualRevenue||e.revenue),0)+tlPastRev;
       const myZoneT   = targetsData[zone.name] || {};
       const tlTargetD = ((myZoneT.tls||{})[tlEmail]||{}).daily || 0;
       const tlTdp     = tlTargetD ? Math.min(100,Math.round(tAch/tlTargetD*100)) : null;
@@ -1542,6 +1582,7 @@
       const snap = await getDocs(q);
       pastData = snap.docs.map(d=>({id:d.id,...d.data()}));
       pastDataLoaded = true;
+      pastConvertedToday = pastData.filter(e=>e.status==="converted"&&e.convertedAt===todayStr());
       renderPostponedDueToday(containerId);
       // Re-open accordion after refresh
       const uid = containerId+"-body";
@@ -1588,22 +1629,23 @@
     const revPct = projRev ? Math.round(achRev/projRev*100) : 0;
     const el = document.getElementById("section-tm-direct");
     if (!el) return;
-    // Build absent-TL list (TLs with zero entries today)
+    // All TLs in zone — TM can enter for any TL (absent or otherwise)
     const activeTLsToday = new Set(allEntries.map(e=>e.tlEmail));
-    const absentTLs = zone ? zone.tls.filter(email=>!activeTLsToday.has(email)).map(email=>({email,name:tm[email]?.name||email})) : [];
-    const absentOptions = absentTLs.map(t=>`<option value="${t.email}">${t.name}</option>`).join("");
+    const allZoneTLs = zone ? zone.tls.map(email=>({email, name:tm[email]?.name||email, hasEntries:activeTLsToday.has(email)})) : [];
+    const absentCount = allZoneTLs.filter(t=>!t.hasEntries).length;
+    const allTLOptions = allZoneTLs.map(t=>`<option value="${t.email}">${t.name}${!t.hasEntries?" (not submitted yet)":""}</option>`).join("");
     el.innerHTML = `
       <div id="tm-direct-postponed-due" style="margin-bottom:0"></div>
       <div id="tm-direct-carry" style="margin-bottom:0"></div>
-      ${absentTLs.length>0?`<div class="card" style="border-top:3px solid #E0440E;margin-bottom:1rem">
+      <div class="card" style="border-top:3px solid #E0440E;margin-bottom:1rem">
         <div style="display:flex;align-items:center;gap:10px;margin-bottom:4px">
-          <div class="card-title" style="margin:0">📌 Add Projection for Absent TL</div>
-          <span style="font-size:11px;background:#FCEBEB;color:#A32D2D;padding:2px 10px;border-radius:20px;font-weight:700">${absentTLs.length} TL${absentTLs.length>1?"s":""} not submitted yet</span>
+          <div class="card-title" style="margin:0">📌 Add Projection on behalf of TL</div>
+          ${absentCount>0?`<span style="font-size:11px;background:#FCEBEB;color:#A32D2D;padding:2px 10px;border-radius:20px;font-weight:700">${absentCount} TL${absentCount>1?"s":""} not submitted yet</span>`:""}
         </div>
-        <div style="font-size:12px;color:var(--faint);margin-bottom:1rem">TL absent today? Enter their projection below — it will appear under their name across all dashboards.</div>
+        <div style="font-size:12px;color:var(--faint);margin-bottom:1rem">Enter projections on behalf of any TL. You can add multiple entries — keep the TL selected and submit again. Will appear under their name across all dashboards.</div>
         <div class="form-grid-4">
-          <div class="form-group"><label>Select Absent TL *</label>
-            <select id="absent-tl-select"><option value="">— Select TL —</option>${absentOptions}</select>
+          <div class="form-group"><label>Select TL *</label>
+            <select id="absent-tl-select"><option value="">— Select TL —</option>${allTLOptions}</select>
           </div>
           <div class="form-group"><label>Member ID *</label><input id="abtl-f-id" type="text" placeholder="e.g. HSH58195449" autocomplete="off"></div>
           <div class="form-group"><label>Member Name *</label><input id="abtl-f-name" type="text" placeholder="Full name"></div>
@@ -1620,10 +1662,14 @@
             </select>
           </div>
           <div class="form-group"><label>Expected Revenue (INR) *</label><input id="abtl-f-rev" type="number" placeholder="e.g. 12000" min="0"></div>
-          <div class="form-group" style="grid-column:span 2"><label>Remark</label><input id="abtl-f-remark" type="text" placeholder="e.g. Callback confirmed at 3pm"></div>
+          <div class="form-group"><label>Activation Date</label>
+            <input id="abtl-f-date" type="date" value="${todayStr()}" max="${todayStr()}" title="Defaults to today. Set a past date if adding a missed entry from a previous day.">
+            <div style="font-size:10px;color:var(--muted);margin-top:3px">Today by default. Change for missed past entries.</div>
+          </div>
+          <div class="form-group"><label>Remark</label><input id="abtl-f-remark" type="text" placeholder="e.g. Callback confirmed at 3pm"></div>
         </div>
-        <div style="margin-top:1rem"><button class="btn-add" onclick="addAbsentTLEntry()">+ Add Projection for Absent TL</button></div>
-      </div>`:""}
+        <div style="margin-top:1rem"><button class="btn-add" onclick="addAbsentTLEntry()">+ Add Projection for TL</button></div>
+      </div>
       <div class="card" style="border-top:3px solid #3C3489;margin-bottom:1rem">
         <div style="display:flex;align-items:flex-start;justify-content:space-between;flex-wrap:wrap;gap:12px;margin-bottom:1rem">
           <div>
@@ -1710,7 +1756,8 @@
     const conv=allEntries.filter(e=>e.status==="converted");
     const lost=allEntries.filter(e=>e.status==="lost");
     const projRev=allEntries.reduce((a,e)=>a+e.revenue,0);
-    const achRev=conv.reduce((a,e)=>a+(e.actualRevenue||e.revenue),0);
+    const pastRev=getPastConvertedTodayRev();
+    const achRev=conv.reduce((a,e)=>a+(e.actualRevenue||e.revenue),0)+pastRev;
     const p=pct(conv.length,total);
     const pending=total-conv.length-lost.length;
 
@@ -1732,7 +1779,7 @@
           <div class="hkpi-value">${inr(achRev)}</div>
           <div class="hkpi-sub">
             ${totalDailyTarget?`<div class="hkpi-bar-bg"><div class="hkpi-bar-fill" style="width:${revPct}%;background:${revCol}"></div></div>
-            <span style="color:${revCol};font-weight:700">${revPct}% of daily target</span> · Target ${inr(totalDailyTarget)}`
+            <span style="color:${revCol};font-weight:700">${revPct}% of daily target</span> · Target ${inr(totalDailyTarget)}${pastRev>0?` <span style="color:#27500A;font-size:10px">(incl. ${inr(pastRev)} old IDs)</span>`:""}`
             :`<span style="color:var(--faint)">No target set — go to Planning → Targets</span>`}
           </div>
         </div>
@@ -1770,7 +1817,8 @@
       const ze=allEntries.filter(e=>z.tls.includes(e.tlEmail)&&!e.isDirect).concat(tmDirect);
       const zc=ze.filter(e=>e.status==="converted");
       const zp=pct(zc.length,ze.length);
-      const zRev=ze.reduce((a,e)=>a+e.revenue,0), zAch=zc.reduce((a,e)=>a+(e.actualRevenue||e.revenue),0);
+      const zPastRev=getPastConvertedTodayRev(e=>z.tls.includes(e.tlEmail)||(e.isDirect&&e.tmEmail===z.tm));
+      const zRev=ze.reduce((a,e)=>a+e.revenue,0), zAch=zc.reduce((a,e)=>a+(e.actualRevenue||e.revenue),0)+zPastRev;
       const tm=getTeamMap()[z.tm];
       const atRisk=z.tls.filter(tlE=>{const te=allEntries.filter(e=>e.tlEmail===tlE);return te.length>0&&pct(te.filter(e=>e.status==="converted").length,te.length)<80;});
       const submittedTLs=z.tls.filter(tlE=>allEntries.some(e=>e.tlEmail===tlE)).length;
@@ -4071,6 +4119,14 @@ tr:hover td { background: var(--surface-2); }
           </div>
         </div>
 
+        <div style="display:flex;align-items:flex-end;gap:12px;margin-top:12px;flex-wrap:wrap">
+          <div class="form-group" style="min-width:160px;margin:0">
+            <label>Activation Date</label>
+            <input id="f-date" type="date" max="" style="padding:9px 11px;border:1px solid var(--border-strong);border-radius:var(--radius);font-family:var(--font);font-size:13px;background:var(--bg);color:var(--text);width:100%">
+            <div style="font-size:10px;color:var(--muted);margin-top:3px">Today by default. Use for missed past entries.</div>
+          </div>
+        </div>
+
         <div style="display:flex;gap:10px;margin-top:1rem;flex-wrap:wrap">
           <button class="btn-add" onclick="addEntry()">+ Add to Pipeline</button>
           <button class="btn-add btn-secondary" onclick="openModal('unplanned')">+ Unplanned Case</button>
@@ -4438,6 +4494,11 @@ tr:hover td { background: var(--surface-2); }
         <label>Remark (how did this case come?)</label>
         <input id="m-unplanned-remark" type="text" placeholder="e.g. Inbound call, reference from member">
       </div>
+    </div>
+    <div class="modal-field" style="margin-top:14px">
+      <label>Activation Date</label>
+      <input id="m-unplanned-date" type="date" max="" style="width:auto;padding:9px 12px;border:1px solid var(--border-strong);border-radius:var(--radius);font-family:var(--font);font-size:13px;background:var(--bg);color:var(--text);outline:none">
+      <div style="font-size:10px;color:var(--muted);margin-top:3px">Today by default. Change only if adding a missed entry from a previous day.</div>
     </div>
     <div class="modal-actions">
       <button class="btn-modal-cancel" onclick="closeModal('unplanned')">Cancel</button>
