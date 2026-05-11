@@ -308,6 +308,8 @@
     try { await signInWithEmailAndPassword(auth,email,pass); }
     catch(e){ showToast("Invalid credentials. Check email and password.","error"); btn.disabled=false; btn.textContent="Sign In →"; }
   };
+  // Register as _doLogin so the non-module bridge can call it once module is ready
+  window._doLogin = window.doLogin;
 
   window.doLogout = async function() { await signOut(auth); };
 
@@ -4689,6 +4691,29 @@ tr:hover td { background: var(--surface-2); }
 </div>
 
 <script>
+// ── GLOBAL BRIDGES for ES module functions ──
+// These ensure onclick="doLogin()" in HTML always works,
+// even if the ES module hasn't finished loading yet.
+function doLogin() {
+  if (window._doLogin) { window._doLogin(); return; }
+  // Module not ready yet — wait up to 5s and retry
+  const btn = document.getElementById("login-btn");
+  if (btn) { btn.textContent = "Loading…"; btn.disabled = true; }
+  let tries = 0;
+  const poll = setInterval(() => {
+    tries++;
+    if (window._doLogin) {
+      clearInterval(poll);
+      window._doLogin();
+    } else if (tries > 50) {
+      clearInterval(poll);
+      alert("App failed to load. Please hard-refresh (Ctrl+Shift+R) and try again.");
+      if (btn) { btn.textContent = "Sign In →"; btn.disabled = false; }
+    }
+  }, 100);
+}
+function doLogout() { if (window.doLogout) window.doLogout(); }
+
 // Quick-fill flag question
 window.setFlagQ = function(q) {
   const el = document.getElementById("flag-question");
