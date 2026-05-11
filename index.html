@@ -233,8 +233,6 @@
     // Sync PA dropdown into unplanned modal whenever it opens
     if (type==="unplanned") {
       renderPADropdown();
-      const ud = document.getElementById("m-unplanned-date");
-      if (ud) { ud.max = todayStr(); ud.value = todayStr(); }
     }
   };
 
@@ -253,7 +251,6 @@
      "m-pw-current","m-pw-new","m-pw-confirm","m-lost-note","m-lost-other"].forEach(id=>{const el=document.getElementById(id);if(el)el.value="";});
     const lostOtherWrap=document.getElementById("lost-other-wrap"); if(lostOtherWrap) lostOtherWrap.style.display="none";
     const unPa = document.getElementById("m-unplanned-pa"); if(unPa) unPa.value="";
-    const unDate = document.getElementById("m-unplanned-date"); if(unDate) { unDate.max=todayStr(); unDate.value=todayStr(); }
     const lostSel = document.getElementById("m-lost-reason"); if(lostSel) lostSel.value="";
     const uPlan   = document.getElementById("m-unplanned-plan"); if(uPlan) uPlan.value="";
   };
@@ -308,8 +305,6 @@
     try { await signInWithEmailAndPassword(auth,email,pass); }
     catch(e){ showToast("Invalid credentials. Check email and password.","error"); btn.disabled=false; btn.textContent="Sign In →"; }
   };
-  // Register as _doLogin so the non-module bridge can call it once module is ready
-  window._doLogin = window.doLogin;
 
   window.doLogout = async function() { await signOut(auth); };
 
@@ -635,28 +630,24 @@
     const remark = document.getElementById("f-remark").value.trim();
     const paEl  = document.getElementById("f-pa");
     const paName = paEl ? paEl.value : "";
-    // Activation date — defaults to today, can be backdated for missed entries
-    const actDateEl = document.getElementById("f-date");
-    const entryDate = (actDateEl && actDateEl.value) ? actDateEl.value : todayStr();
 
     if (paName==="__manage__") { openPAManager(); return; }
     if (!mid||!mname||!plan) { showToast("Member ID, Name and Plan are required","error"); return; }
     if (!paName) { showToast("Please select a PA / Calling Agent","error"); return; }
     if (rev<=0) { showToast("Please enter expected revenue","error"); return; }
 
-    const pool = entryDate === todayStr() ? allEntries : [...allEntries, ...pastData];
-    const exists = pool.find(e=>e.memberId===mid&&e.tlEmail===currentUser.email&&e.date===entryDate);
-    if (exists) { showToast("This Member ID is already in your pipeline for "+entryDate,"error"); return; }
-    // Warn if same member ID exists under a different TL for same date
+    const exists = allEntries.find(e=>e.memberId===mid&&e.tlEmail===currentUser.email&&e.date===todayStr());
+    if (exists) { showToast("This Member ID is already in today's pipeline","error"); return; }
+    // Warn if same member ID exists under a different TL today
     const crossDup = allEntries.find(e=>e.memberId===mid&&e.tlEmail!==currentUser.email&&e.date===todayStr());
-    if (crossDup && entryDate===todayStr()) { if(!confirm(`⚠️ Member ID ${mid} is already in ${crossDup.tlName}'s pipeline today. Add anyway?`)) return; }
+    if (crossDup) { if(!confirm(`⚠️ Member ID ${mid} is already in ${crossDup.tlName}'s pipeline today. Add anyway?`)) return; }
 
     setLoading(true);
     try {
       await addDoc(collection(db,"entries"),{
         tlEmail:currentUser.email, tlName:currentProfile.name,
         tmEmail:currentProfile.tm||"", zone:currentProfile.zone,
-        date:entryDate, memberId:mid, memberName:mname,
+        date:todayStr(), memberId:mid, memberName:mname,
         plan, revenue:rev, remark, paName, slot:currentSlot,
         status:"pending", heat, isUnplanned:false,
         createdAt:serverTimestamp(), submittedSlot:currentSlot,
@@ -664,8 +655,7 @@
       ["f-id","f-name","f-rev","f-remark"].forEach(i=>{const el=document.getElementById(i);if(el)el.value="";});
       document.getElementById("f-plan").value="";
       if(paEl) paEl.value="";
-      if(actDateEl) actDateEl.value = todayStr();
-      showToast("Entry added ✓"+(entryDate!==todayStr()?" (for "+entryDate+")"):"","success");
+      showToast("Entry added successfully ✓","success");
     } catch(e) { showToast("Failed: "+e.message,"error"); }
     setLoading(false);
   };
@@ -706,7 +696,7 @@
     if (!currentProfile || currentProfile.role !== "tm") return;
     const tlSel = document.getElementById("absent-tl-select");
     const tlEmail = tlSel ? tlSel.value : "";
-    if (!tlEmail) { showToast("Please select the TL","error"); return; }
+    if (!tlEmail) { showToast("Please select the absent TL","error"); return; }
     const zone = getMyZone(); if (!zone) return;
     const tm = getTeamMap();
     const tlProfile = tm[tlEmail];
@@ -717,32 +707,24 @@
     const heat  = document.getElementById("abtl-f-heat").value;
     const rev   = parseInt(document.getElementById("abtl-f-rev").value)||0;
     const remark= document.getElementById("abtl-f-remark").value.trim();
-    // Activation date — defaults to today, can be backdated
-    const actDateEl = document.getElementById("abtl-f-date");
-    const entryDate = (actDateEl && actDateEl.value) ? actDateEl.value : todayStr();
     if(!mid||!mname||!plan){showToast("Member ID, Name and Plan are required","error");return;}
     if(rev<=0){showToast("Please enter expected revenue","error");return;}
-    // Check duplicate for the chosen date (search allEntries for today, pastData for past dates)
-    const pool = entryDate === todayStr() ? allEntries : [...allEntries, ...pastData];
-    const exists = pool.find(e=>e.memberId===mid&&e.tlEmail===tlEmail&&e.date===entryDate);
-    if(exists){showToast("This Member ID already exists under "+tlProfile.name+"'s pipeline for "+entryDate,"error");return;}
+    const exists = allEntries.find(e=>e.memberId===mid&&e.tlEmail===tlEmail&&e.date===todayStr());
+    if(exists){showToast("This Member ID already exists under "+tlProfile.name+"'s pipeline today","error");return;}
     setLoading(true);
     try {
       await addDoc(collection(db,"entries"),{
         tlEmail:tlEmail, tlName:tlProfile.name,
         tmEmail:currentUser.email, zone:zone.name,
-        date:entryDate, memberId:mid, memberName:mname,
+        date:todayStr(), memberId:mid, memberName:mname,
         plan, revenue:rev, remark, paName:"(TM on behalf)",
         slot:currentSlot, status:"pending", heat, isUnplanned:false,
         addedByTM:true, addedByTMName:currentProfile.name,
         createdAt:serverTimestamp(), submittedSlot:currentSlot,
       });
-      // Clear only the per-projection fields — keep TL selected for multiple entries
       ["abtl-f-id","abtl-f-name","abtl-f-rev","abtl-f-remark"].forEach(id=>{const el=document.getElementById(id);if(el)el.value="";});
       const ps=document.getElementById("abtl-f-plan"); if(ps) ps.value="";
-      // Reset date back to today
-      if(actDateEl) actDateEl.value = todayStr();
-      showToast("Projection added for "+tlProfile.name+" ✓ ("+entryDate+")","success");
+      showToast("Projection added for "+tlProfile.name+" ✓","success");
     } catch(e){showToast("Failed: "+e.message,"error");}
     setLoading(false);
   };
@@ -853,8 +835,6 @@
     const remark = document.getElementById("m-unplanned-remark").value.trim();
     const paEl   = document.getElementById("m-unplanned-pa");
     const paName = paEl ? paEl.value : "";
-    const actDateEl = document.getElementById("m-unplanned-date");
-    const entryDate = (actDateEl && actDateEl.value) ? actDateEl.value : todayStr();
     if (paName === "__manage__") { openPAManager(); return; }
     if (!mid||!mname||!plan)     { showToast("Member ID, Name and Plan are required","error"); return; }
     if (!paName)                  { showToast("Please select a PA / Calling Agent","error"); return; }
@@ -864,12 +844,12 @@
       await addDoc(collection(db,"entries"),{
         tlEmail:currentUser.email, tlName:currentProfile.name,
         tmEmail:currentProfile.tm||"", zone:currentProfile.zone,
-        date:entryDate, memberId:mid, memberName:mname,
+        date:todayStr(), memberId:mid, memberName:mname,
         plan, revenue:rev, remark, paName, slot:currentSlot,
         status:"pending", isUnplanned:true,
         createdAt:serverTimestamp(), submittedSlot:currentSlot,
       });
-      showToast("Unplanned case added!"+(entryDate!==todayStr()?" (for "+entryDate+")"):"","success");
+      showToast("Unplanned case added!","success");
     } catch(e) { showToast("Failed: "+e.message,"error"); }
     setLoading(false); closeModal("unplanned");
   };
@@ -1098,9 +1078,6 @@
 
   /* ── TL RENDER ── */
   function renderTL() {
-    // Initialize activation date field with today's date and max=today
-    const fDateEl = document.getElementById("f-date");
-    if (fDateEl) { fDateEl.max = todayStr(); if (!fDateEl.value) fDateEl.value = todayStr(); }
     const mine = allEntries.filter(e=>e.tlEmail===currentUser.email);
     const conv  = mine.filter(e=>e.status==="converted");
     const lost  = mine.filter(e=>e.status==="lost");
@@ -1631,23 +1608,22 @@
     const revPct = projRev ? Math.round(achRev/projRev*100) : 0;
     const el = document.getElementById("section-tm-direct");
     if (!el) return;
-    // All TLs in zone — TM can enter for any TL (absent or otherwise)
+    // Build absent-TL list (TLs with zero entries today)
     const activeTLsToday = new Set(allEntries.map(e=>e.tlEmail));
-    const allZoneTLs = zone ? zone.tls.map(email=>({email, name:tm[email]?.name||email, hasEntries:activeTLsToday.has(email)})) : [];
-    const absentCount = allZoneTLs.filter(t=>!t.hasEntries).length;
-    const allTLOptions = allZoneTLs.map(t=>`<option value="${t.email}">${t.name}${!t.hasEntries?" (not submitted yet)":""}</option>`).join("");
+    const absentTLs = zone ? zone.tls.filter(email=>!activeTLsToday.has(email)).map(email=>({email,name:tm[email]?.name||email})) : [];
+    const absentOptions = absentTLs.map(t=>`<option value="${t.email}">${t.name}</option>`).join("");
     el.innerHTML = `
       <div id="tm-direct-postponed-due" style="margin-bottom:0"></div>
       <div id="tm-direct-carry" style="margin-bottom:0"></div>
-      <div class="card" style="border-top:3px solid #E0440E;margin-bottom:1rem">
+      ${absentTLs.length>0?`<div class="card" style="border-top:3px solid #E0440E;margin-bottom:1rem">
         <div style="display:flex;align-items:center;gap:10px;margin-bottom:4px">
-          <div class="card-title" style="margin:0">📌 Add Projection on behalf of TL</div>
-          ${absentCount>0?`<span style="font-size:11px;background:#FCEBEB;color:#A32D2D;padding:2px 10px;border-radius:20px;font-weight:700">${absentCount} TL${absentCount>1?"s":""} not submitted yet</span>`:""}
+          <div class="card-title" style="margin:0">📌 Add Projection for Absent TL</div>
+          <span style="font-size:11px;background:#FCEBEB;color:#A32D2D;padding:2px 10px;border-radius:20px;font-weight:700">${absentTLs.length} TL${absentTLs.length>1?"s":""} not submitted yet</span>
         </div>
-        <div style="font-size:12px;color:var(--faint);margin-bottom:1rem">Enter projections on behalf of any TL. You can add multiple entries — keep the TL selected and submit again. Will appear under their name across all dashboards.</div>
+        <div style="font-size:12px;color:var(--faint);margin-bottom:1rem">TL absent today? Enter their projection below — it will appear under their name across all dashboards.</div>
         <div class="form-grid-4">
-          <div class="form-group"><label>Select TL *</label>
-            <select id="absent-tl-select"><option value="">— Select TL —</option>${allTLOptions}</select>
+          <div class="form-group"><label>Select Absent TL *</label>
+            <select id="absent-tl-select"><option value="">— Select TL —</option>${absentOptions}</select>
           </div>
           <div class="form-group"><label>Member ID *</label><input id="abtl-f-id" type="text" placeholder="e.g. HSH58195449" autocomplete="off"></div>
           <div class="form-group"><label>Member Name *</label><input id="abtl-f-name" type="text" placeholder="Full name"></div>
@@ -1664,14 +1640,10 @@
             </select>
           </div>
           <div class="form-group"><label>Expected Revenue (INR) *</label><input id="abtl-f-rev" type="number" placeholder="e.g. 12000" min="0"></div>
-          <div class="form-group"><label>Activation Date</label>
-            <input id="abtl-f-date" type="date" value="${todayStr()}" max="${todayStr()}" title="Defaults to today. Set a past date if adding a missed entry from a previous day.">
-            <div style="font-size:10px;color:var(--muted);margin-top:3px">Today by default. Change for missed past entries.</div>
-          </div>
-          <div class="form-group"><label>Remark</label><input id="abtl-f-remark" type="text" placeholder="e.g. Callback confirmed at 3pm"></div>
+          <div class="form-group" style="grid-column:span 2"><label>Remark</label><input id="abtl-f-remark" type="text" placeholder="e.g. Callback confirmed at 3pm"></div>
         </div>
-        <div style="margin-top:1rem"><button class="btn-add" onclick="addAbsentTLEntry()">+ Add Projection for TL</button></div>
-      </div>
+        <div style="margin-top:1rem"><button class="btn-add" onclick="addAbsentTLEntry()">+ Add Projection for Absent TL</button></div>
+      </div>`:""}
       <div class="card" style="border-top:3px solid #3C3489;margin-bottom:1rem">
         <div style="display:flex;align-items:flex-start;justify-content:space-between;flex-wrap:wrap;gap:12px;margin-bottom:1rem">
           <div>
@@ -4121,14 +4093,6 @@ tr:hover td { background: var(--surface-2); }
           </div>
         </div>
 
-        <div style="display:flex;align-items:flex-end;gap:12px;margin-top:12px;flex-wrap:wrap">
-          <div class="form-group" style="min-width:160px;margin:0">
-            <label>Activation Date</label>
-            <input id="f-date" type="date" max="" style="padding:9px 11px;border:1px solid var(--border-strong);border-radius:var(--radius);font-family:var(--font);font-size:13px;background:var(--bg);color:var(--text);width:100%">
-            <div style="font-size:10px;color:var(--muted);margin-top:3px">Today by default. Use for missed past entries.</div>
-          </div>
-        </div>
-
         <div style="display:flex;gap:10px;margin-top:1rem;flex-wrap:wrap">
           <button class="btn-add" onclick="addEntry()">+ Add to Pipeline</button>
           <button class="btn-add btn-secondary" onclick="openModal('unplanned')">+ Unplanned Case</button>
@@ -4497,11 +4461,6 @@ tr:hover td { background: var(--surface-2); }
         <input id="m-unplanned-remark" type="text" placeholder="e.g. Inbound call, reference from member">
       </div>
     </div>
-    <div class="modal-field" style="margin-top:14px">
-      <label>Activation Date</label>
-      <input id="m-unplanned-date" type="date" max="" style="width:auto;padding:9px 12px;border:1px solid var(--border-strong);border-radius:var(--radius);font-family:var(--font);font-size:13px;background:var(--bg);color:var(--text);outline:none">
-      <div style="font-size:10px;color:var(--muted);margin-top:3px">Today by default. Change only if adding a missed entry from a previous day.</div>
-    </div>
     <div class="modal-actions">
       <button class="btn-modal-cancel" onclick="closeModal('unplanned')">Cancel</button>
       <button class="btn-modal-primary btn-modal-purple" onclick="submitUnplanned()">⚡ Add Case</button>
@@ -4691,36 +4650,6 @@ tr:hover td { background: var(--surface-2); }
 </div>
 
 <script>
-// ── GLOBAL BRIDGES for ES module functions ──
-// These ensure onclick="doLogin()" in HTML always works,
-// even if the ES module hasn't finished loading yet.
-function doLogin() {
-  if (window._doLogin) { window._doLogin(); return; }
-  // Module not ready yet — wait up to 8s and retry
-  const btn = document.getElementById("login-btn");
-  if (btn) { btn.textContent = "Connecting…"; btn.disabled = true; }
-  let tries = 0;
-  const poll = setInterval(() => {
-    tries++;
-    if (window._doLogin) {
-      clearInterval(poll);
-      window._doLogin();
-    } else if (tries > 80) {
-      clearInterval(poll);
-      if (btn) { btn.textContent = "Sign In →"; btn.disabled = false; }
-      // Check if running as local file
-      if (window.location.protocol === "file:") {
-        const t = document.getElementById("toast");
-        if (t) { t.textContent = "⚠️ Open from your deployed URL, not as a local file."; t.className = "toast toast-error show"; setTimeout(()=>t.classList.remove("show"),6000); }
-      } else {
-        const t = document.getElementById("toast");
-        if (t) { t.textContent = "Failed to connect. Hard-refresh (Ctrl+Shift+R) and try again."; t.className = "toast toast-error show"; setTimeout(()=>t.classList.remove("show"),6000); }
-      }
-    }
-  }, 100);
-}
-function doLogout() { if (window.doLogout) window.doLogout(); }
-
 // Quick-fill flag question
 window.setFlagQ = function(q) {
   const el = document.getElementById("flag-question");
