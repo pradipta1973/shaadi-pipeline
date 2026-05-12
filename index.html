@@ -560,6 +560,9 @@
     renderSection(s);
     syncBottomTab(s);
   }
+  // Expose on window so onclick attributes in bottom tab buttons can reach
+  // these functions from outside the ES module scope (same pattern as markStatus etc.)
+  window.showSection = showSection;
 
   // Keeps the mobile bottom tab active state in sync with the current section.
   // Safe to call at any time — does nothing if the bar isn't rendered yet.
@@ -568,6 +571,7 @@
     if (!btabs.length) return;
     btabs.forEach(b => b.classList.toggle("btab-active", b.dataset.section === section));
   }
+  window.syncBottomTab = syncBottomTab;
 
   function renderCurrentView() {
     if (currentSection) renderSection(currentSection);
