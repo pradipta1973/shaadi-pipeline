@@ -1361,6 +1361,7 @@
           ${e.status==="postponed"?`<button class="btn-xs btn-conv" onclick="markStatus('${e.id}','converted')">✓ Convert</button><button class="btn-xs btn-lost" onclick="markStatus('${e.id}','lost')">✗ Lost</button><button class="btn-xs btn-postpone" onclick="markStatus('${e.id}','postponed')">⏱ Postpone</button>`:""}
           ${e.status==="lost"?`<button class="btn-xs" style="background:#EAF3DE;color:#27500A;border-color:#C0DD97" onclick="reopenCase('${e.id}')">↺ Re-open</button>`:""}
           ${canEdit?`<button class="btn-xs btn-del" onclick="deleteEntry('${e.id}','${e.submittedSlot}')">Delete</button>`:""}
+          ${(e.status==="pending"||e.status==="postponed"||e.status==="lost")?`<span class="actions-tap-hint" onclick="openActionSheet('${e.id}','${e.status}','${e.memberName.replace(/'/g,"\\'")}','markStatus')">⋯ Actions</span>`:""}
         </td>
       </tr>`;
     }).join("");
@@ -1590,6 +1591,7 @@
           <button class="btn-xs btn-conv" onclick="markStatus('${e.id}','converted')">✓ Convert</button>
           <button class="btn-xs btn-lost" onclick="markStatus('${e.id}','lost')">✗ Lost</button>
           <button class="btn-xs btn-postpone" onclick="markStatus('${e.id}','postponed')">⏱</button>
+          <span class="actions-tap-hint" onclick="openActionSheet('${e.id}','pending','${e.memberName.replace(/'/g,"\\'")}','markStatus')">⋯ Actions</span>
         </td>
       </tr>`;
     }).join("");
@@ -1638,6 +1640,7 @@
         <button class="btn-xs btn-conv" onclick="markStatus('${e.id}','converted')">✓ Convert</button>
         <button class="btn-xs btn-lost" onclick="markStatus('${e.id}','lost')">✗ Lost</button>
         <button class="btn-xs btn-postpone" onclick="markStatus('${e.id}','postponed')">⏱</button>
+        <span class="actions-tap-hint" onclick="openActionSheet('${e.id}','postponed','${e.memberName.replace(/'/g,"\\'")}','markStatus')">⋯ Actions</span>
       </td>
     </tr>`).join("");
     el.innerHTML = `<div style="margin-bottom:0.75rem;border:1px solid #B5D4F4;border-radius:var(--radius-lg);overflow:hidden">
@@ -1831,6 +1834,7 @@
                   ${e.status==="pending"?`<button class="btn-xs btn-conv" onclick="markDirectStatus('${e.id}','converted')">&#10003; Convert</button><button class="btn-xs btn-lost" onclick="markDirectStatus('${e.id}','lost')">&#10007; Lost</button><button class="btn-xs btn-postpone" onclick="markDirectStatus('${e.id}','postponed')">&#9201;</button><button class="btn-xs btn-del" onclick="deleteEntry('${e.id}','${e.submittedSlot}')">Delete</button>`:""}
                   ${e.status==="postponed"?`<button class="btn-xs btn-conv" onclick="markDirectStatus('${e.id}','converted')">&#10003; Convert</button>`:""}
                   ${e.status==="lost"?`<button class="btn-xs" style="background:#EAF3DE;color:#27500A;border-color:#C0DD97" onclick="reopenCase('${e.id}')">&#8634; Re-open</button>`:""}
+                  ${(e.status==="pending"||e.status==="postponed"||e.status==="lost")?`<span class="actions-tap-hint" onclick="openActionSheet('${e.id}','${e.status}','${e.memberName.replace(/'/g,"\\'")}','markDirectStatus')">⋯ Actions</span>`:""}
               </tr>`;
             }).join("") : `<tr><td colspan="10" class="empty-cell">No direct entries yet &mdash; add projections above</td></tr>`}
             </tbody>
@@ -3730,7 +3734,7 @@ tr:hover td { background: var(--surface-2); }
 
 /* ── ACTION BUTTONS ── */
 .actions { display: flex; gap: 4px; flex-wrap: nowrap; }
-.btn-xs { padding: 4px 9px; border-radius: 6px; border: 1px solid; font-family: var(--font); font-size: 11px; font-weight: 500; cursor: pointer; white-space: nowrap; transition: all 0.12s; }
+.btn-xs { padding: 4px 9px; min-height: 32px; border-radius: 6px; border: 1px solid; font-family: var(--font); font-size: 11px; font-weight: 500; cursor: pointer; white-space: nowrap; transition: all 0.12s; }
 .btn-conv    { background: var(--green-bg);  color: var(--green);  border-color: var(--green-border); }
 .btn-conv:hover { background: #D9EEC6; }
 .btn-lost    { background: var(--red-bg);    color: var(--red);    border-color: var(--red-border); }
@@ -3738,6 +3742,60 @@ tr:hover td { background: var(--surface-2); }
 .btn-postpone{ background: var(--blue-bg);   color: var(--blue);   border-color: var(--blue-border); }
 .btn-del     { background: var(--bg);        color: var(--muted);  border-color: var(--border-strong); }
 .btn-del:hover { background: var(--red-bg); color: var(--red); }
+
+/* ── MOBILE ACTION SHEET ── */
+#action-sheet-backdrop {
+  display: none;
+  position: fixed; inset: 0;
+  background: rgba(15,14,12,0.45);
+  backdrop-filter: blur(3px);
+  z-index: 1000;
+  align-items: flex-end;
+  opacity: 0;
+  transition: opacity 0.2s ease;
+}
+#action-sheet-backdrop.as-visible { opacity: 1; }
+#action-sheet {
+  background: var(--surface);
+  border-radius: 20px 20px 0 0;
+  padding: 0 0 env(safe-area-inset-bottom, 12px);
+  width: 100%;
+  transform: translateY(100%);
+  transition: transform 0.25s cubic-bezier(0.34,1.56,0.64,1);
+}
+#action-sheet-backdrop.as-visible #action-sheet { transform: translateY(0); }
+.as-handle { width: 36px; height: 4px; background: var(--border-strong); border-radius: 2px; margin: 12px auto 4px; }
+.as-title { font-size: 11px; font-weight: 700; color: var(--faint); text-transform: uppercase; letter-spacing: .07em; text-align: center; padding: 4px 0 12px; border-bottom: 1px solid var(--border); margin: 0 16px; }
+.as-buttons { display: flex; flex-direction: column; gap: 8px; padding: 14px 16px; }
+.as-btn {
+  display: flex; align-items: center; gap: 14px;
+  width: 100%; padding: 15px 18px;
+  border-radius: var(--radius-lg); border: 1px solid;
+  font-family: var(--font); font-size: 15px; font-weight: 600;
+  cursor: pointer; text-align: left;
+  transition: opacity 0.12s;
+  -webkit-tap-highlight-color: transparent;
+}
+.as-btn:active { opacity: 0.8; }
+.as-btn-icon { font-size: 22px; flex-shrink: 0; }
+.as-btn-conv     { background: var(--green-bg); color: var(--green); border-color: var(--green-border); }
+.as-btn-lost     { background: var(--red-bg);   color: var(--red);   border-color: var(--red-border); }
+.as-btn-postpone { background: var(--blue-bg);  color: var(--blue);  border-color: var(--blue-border); }
+.as-btn-reopen   { background: var(--green-bg); color: var(--green); border-color: var(--green-border); }
+.as-btn-cancel   { background: var(--bg); color: var(--muted); border-color: var(--border-strong); margin-top: 4px; }
+@media(max-width:640px) {
+  td.actions .btn-xs:not(.btn-del) { display: none; }
+  td.actions .btn-del { display: inline-flex; min-height: 36px; padding: 6px 10px; }
+  .actions-tap-hint {
+    display: inline-flex; align-items: center; gap: 5px;
+    font-size: 11px; color: var(--muted); cursor: pointer;
+    padding: 8px 0;
+  }
+}
+@media(min-width:641px) {
+  .actions-tap-hint { display: none; }
+  #action-sheet-backdrop { display: none !important; }
+}
 
 /* ── GUIDANCE ── */
 .guidance-wrap { display: flex; flex-direction: column; gap: 6px; }
@@ -5829,5 +5887,57 @@ function renderRMHTML(allRows, filteredZones) {
   .dt-zone-pill { min-width:130px; }
 }
 </style>
+
+<!-- ══════════ MOBILE ACTION SHEET ══════════
+     Slide-up sheet for status actions on mobile (≤640px).
+     Calls existing markStatus / markDirectStatus — zero changes to those functions.
+     Hidden entirely on desktop via CSS.
+═══════════════════════════════════════════ -->
+<div id="action-sheet-backdrop" onclick="closeActionSheet(event)">
+  <div id="action-sheet">
+    <div class="as-handle"></div>
+    <div class="as-title" id="as-member-name">Update status</div>
+    <div class="as-buttons" id="as-buttons"></div>
+  </div>
+</div>
+
+<script>
+window._asEntryId = null;
+window._asFnName  = "markStatus";
+
+window.openActionSheet = function(id, status, memberName, fnName) {
+  window._asEntryId = id;
+  window._asFnName  = fnName || "markStatus";
+  document.getElementById("as-member-name").textContent = memberName || "Update status";
+  const btns = document.getElementById("as-buttons");
+  let html = "";
+  if (status === "pending" || status === "postponed") {
+    html += `<button class="as-btn as-btn-conv" onclick="asAction('converted')"><span class="as-btn-icon">✅</span> Convert</button>
+             <button class="as-btn as-btn-lost" onclick="asAction('lost')"><span class="as-btn-icon">❌</span> Mark as Lost</button>
+             <button class="as-btn as-btn-postpone" onclick="asAction('postponed')"><span class="as-btn-icon">⏱️</span> Postpone</button>`;
+  } else if (status === "lost") {
+    html += `<button class="as-btn as-btn-reopen" onclick="asAction('pending')"><span class="as-btn-icon">↺</span> Re-open</button>`;
+  }
+  html += `<button class="as-btn as-btn-cancel" onclick="closeActionSheet()"><span class="as-btn-icon">✕</span> Cancel</button>`;
+  btns.innerHTML = html;
+  const bd = document.getElementById("action-sheet-backdrop");
+  bd.style.display = "flex";
+  requestAnimationFrame(() => requestAnimationFrame(() => bd.classList.add("as-visible")));
+};
+
+window.asAction = function(newStatus) {
+  const id = window._asEntryId;
+  const fn = window._asFnName;
+  closeActionSheet();
+  if (id && typeof window[fn] === "function") window[fn](id, newStatus);
+};
+
+window.closeActionSheet = function(e) {
+  if (e && e.target !== document.getElementById("action-sheet-backdrop")) return;
+  const bd = document.getElementById("action-sheet-backdrop");
+  bd.classList.remove("as-visible");
+  setTimeout(() => { bd.style.display = "none"; }, 250);
+};
+</script>
 </body>
 </html>
