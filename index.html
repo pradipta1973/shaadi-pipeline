@@ -509,6 +509,47 @@
       });
     }
     showSection(role==="rm"||role==="admin"?"admin":role==="tm"?"tm":"tl");
+
+    // ── MOBILE BOTTOM TAB BAR — built from role-specific tabs ──
+    // Mirrors the topbar nav but as a fixed bottom bar on mobile.
+    // Purely additive: desktop nav (#main-nav) is unchanged.
+    const btb = document.getElementById("bottom-tab-bar");
+    if (btb) {
+      let tabs = [];
+      if (role === "tl") {
+        tabs = [
+          { section: "tl",          icon: "📋", label: "Pipeline" },
+          { section: "weekly",       icon: "📅", label: "Weekly"   },
+          { section: "daily-track",  icon: "📈", label: "Daily"    },
+        ];
+      } else if (role === "tm") {
+        tabs = [
+          { section: "tm",           icon: "🏠", label: "Today"    },
+          { section: "daily-track",  icon: "📈", label: "Daily"    },
+          { section: "weekly",       icon: "📅", label: "Weekly"   },
+          { section: "leaderboard",  icon: "🏆", label: "Leaders"  },
+          { section: "team-mgmt",    icon: "👥", label: "Team"     },
+        ];
+      } else {
+        // rm / admin
+        tabs = [
+          { section: "admin",           icon: "🏠", label: "Today"    },
+          { section: "performance-hub", icon: "📊", label: "Perf"     },
+          { section: "daily-track",     icon: "📈", label: "Daily"    },
+          { section: "planning-hub",    icon: "🎯", label: "Planning" },
+          { section: "team-mgmt",       icon: "👥", label: "Team"     },
+        ];
+      }
+      btb.innerHTML = tabs.map(t =>
+        `<button class="btab" data-section="${t.section}" onclick="showSection('${t.section}');syncBottomTab('${t.section}')">
+          <span class="btab-icon">${t.icon}</span>
+          <span class="btab-label">${t.label}</span>
+        </button>`
+      ).join("");
+      // Activate the first tab to match initial section shown above
+      const firstSection = role==="rm"||role==="admin" ? "admin" : role==="tm" ? "tm" : "tl";
+      syncBottomTab(firstSection);
+    }
   }
 
   function showSection(s) {
@@ -517,6 +558,15 @@
     const el = document.getElementById("section-"+s);
     if (el) el.style.display = "block";
     renderSection(s);
+    syncBottomTab(s);
+  }
+
+  // Keeps the mobile bottom tab active state in sync with the current section.
+  // Safe to call at any time — does nothing if the bar isn't rendered yet.
+  function syncBottomTab(section) {
+    const btabs = document.querySelectorAll("#bottom-tab-bar .btab");
+    if (!btabs.length) return;
+    btabs.forEach(b => b.classList.toggle("btab-active", b.dataset.section === section));
   }
 
   function renderCurrentView() {
@@ -3984,6 +4034,81 @@ tr:hover td { background: var(--surface-2); }
   .slot-tabs { border-radius: var(--radius); }
 }
 
+/* ── MOBILE BOTTOM TAB BAR ── */
+/* Only visible on mobile (≤640px). Desktop nav (#main-nav) stays unchanged. */
+#bottom-tab-bar {
+  display: none; /* hidden by default — shown only inside @media below */
+}
+@media(max-width:640px) {
+  /* Hide topbar nav on mobile — bottom bar replaces it */
+  #main-nav { display: none !important; }
+
+  /* Give main content breathing room above the bar */
+  .main { padding-bottom: 76px; }
+
+  /* The bar itself */
+  #bottom-tab-bar {
+    display: flex;
+    position: fixed;
+    bottom: 0; left: 0; right: 0;
+    height: 60px;
+    background: var(--surface);
+    border-top: 1px solid var(--border);
+    z-index: 300;
+    align-items: stretch;
+    padding: 0;
+    /* Safe area for notched phones */
+    padding-bottom: env(safe-area-inset-bottom, 0px);
+  }
+
+  /* Each tab button */
+  .btab {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 3px;
+    border: none;
+    background: transparent;
+    font-family: var(--font);
+    font-size: 10px;
+    font-weight: 500;
+    color: var(--faint);
+    cursor: pointer;
+    padding: 6px 4px;
+    transition: color var(--transition), background var(--transition);
+    position: relative;
+    -webkit-tap-highlight-color: transparent;
+  }
+  .btab:active { background: var(--bg); }
+  .btab.btab-active { color: var(--brand); }
+
+  /* Active indicator line at top of tab */
+  .btab.btab-active::before {
+    content: '';
+    position: absolute;
+    top: 0; left: 20%; right: 20%;
+    height: 2.5px;
+    background: var(--brand);
+    border-radius: 0 0 3px 3px;
+  }
+
+  /* Icon inside tab */
+  .btab-icon {
+    font-size: 20px;
+    line-height: 1;
+  }
+  .btab-label {
+    font-size: 9.5px;
+    letter-spacing: 0.01em;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    max-width: 56px;
+  }
+}
+
 /* ── COMPREHENSIVE MOBILE STYLES ── */
 @media(max-width:640px) {
   /* Nav — horizontal scroll with larger tap targets */
@@ -4402,6 +4527,11 @@ tr:hover td { background: var(--surface-2); }
     <div id="section-targets" class="section"></div>
 
   </div><!-- /main -->
+
+  <!-- ══════════════════ MOBILE BOTTOM TAB BAR ══════════════════ -->
+  <!-- Rendered by setupNav() based on role; hidden on desktop via CSS -->
+  <nav id="bottom-tab-bar" aria-label="Main navigation"></nav>
+
 </div><!-- /app -->
 
 <!-- ══════════════════════════════════════════════════
