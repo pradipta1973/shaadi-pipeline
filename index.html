@@ -645,6 +645,8 @@
     if (!mid||!mname||!plan) { showToast("Member ID, Name and Plan are required","error"); return; }
     if (!paName) { showToast("Please select a PA / Calling Agent","error"); return; }
     if (rev<=0) { showToast("Please enter expected revenue","error"); return; }
+    if (rev<10000) { showToast("Revenue cannot be less than ₹10,000","error"); return; }
+    if (rev>100000) { showToast("Revenue cannot be more than ₹1,00,000","error"); return; }
 
     const pool = entryDate === todayStr() ? allEntries : [...allEntries, ...pastData];
     const exists = pool.find(e=>e.memberId===mid&&e.tlEmail===currentUser.email&&e.date===entryDate);
@@ -683,6 +685,8 @@
     const remark=document.getElementById("tm-f-remark").value.trim();
     if(!mid||!mname||!plan){showToast("Member ID, Name and Plan are required","error");return;}
     if(rev<=0){showToast("Please enter expected revenue","error");return;}
+    if(rev<10000){showToast("Revenue cannot be less than ₹10,000","error");return;}
+    if(rev>100000){showToast("Revenue cannot be more than ₹1,00,000","error");return;}
     const exists=allEntries.find(e=>e.memberId===mid&&e.tlEmail===currentUser.email&&e.date===todayStr());
     if(exists){showToast("This Member ID is already in today's pipeline","error");return;}
     setLoading(true);
@@ -723,6 +727,8 @@
     const entryDate = (actDateEl && actDateEl.value) ? actDateEl.value : todayStr();
     if(!mid||!mname||!plan){showToast("Member ID, Name and Plan are required","error");return;}
     if(rev<=0){showToast("Please enter expected revenue","error");return;}
+    if(rev<10000){showToast("Revenue cannot be less than ₹10,000","error");return;}
+    if(rev>100000){showToast("Revenue cannot be more than ₹1,00,000","error");return;}
     // Check duplicate for the chosen date
     const pool = entryDate === todayStr() ? allEntries : [...allEntries, ...pastData];
     const exists = pool.find(e=>e.memberId===mid&&e.tlEmail===tlEmail&&e.date===entryDate);
@@ -860,6 +866,8 @@
     if (!mid||!mname||!plan)     { showToast("Member ID, Name and Plan are required","error"); return; }
     if (!paName)                  { showToast("Please select a PA / Calling Agent","error"); return; }
     if (rev <= 0)                 { showToast("Please enter expected revenue","error"); return; }
+    if (rev < 10000)              { showToast("Revenue cannot be less than ₹10,000","error"); return; }
+    if (rev > 100000)             { showToast("Revenue cannot be more than ₹1,00,000","error"); return; }
     setLoading(true);
     try {
       await addDoc(collection(db,"entries"),{
@@ -873,6 +881,39 @@
       showToast("Unplanned case added!"+(entryDate!==todayStr()?" (for "+entryDate+")":""),"success");
     } catch(e) { showToast("Failed: "+e.message,"error"); }
     setLoading(false); closeModal("unplanned");
+  };
+
+  /* ── TM UNPLANNED CASE (from TM Today panel) ── */
+  window.submitTMUnplanned = async function() {
+    const mid    = document.getElementById("tm-m-unplanned-id").value.trim().toUpperCase();
+    const mname  = document.getElementById("tm-m-unplanned-name").value.trim();
+    const plan   = document.getElementById("tm-m-unplanned-plan").value;
+    const heat   = document.getElementById("tm-m-unplanned-heat").value;
+    const rev    = parseInt(document.getElementById("tm-m-unplanned-rev").value)||0;
+    const remark = document.getElementById("tm-m-unplanned-remark").value.trim();
+    if (!mid||!mname||!plan) { showToast("Member ID, Name and Plan are required","error"); return; }
+    if (rev <= 0)             { showToast("Please enter revenue","error"); return; }
+    if (rev < 10000)          { showToast("Revenue cannot be less than ₹10,000","error"); return; }
+    if (rev > 100000)         { showToast("Revenue cannot be more than ₹1,00,000","error"); return; }
+    const exists = allEntries.find(e=>e.memberId===mid&&e.tlEmail===currentUser.email&&e.date===todayStr());
+    if (exists) { showToast("This Member ID is already in today's pipeline","error"); return; }
+    setLoading(true);
+    try {
+      await addDoc(collection(db,"entries"),{
+        tlEmail:currentUser.email, tlName:currentProfile.name+" (Direct)",
+        tmEmail:currentUser.email, zone:currentProfile.zone,
+        date:todayStr(), memberId:mid, memberName:mname,
+        plan, revenue:rev, remark, paName:currentProfile.name,
+        slot:currentSlot, heat, isUnplanned:true, isDirect:true,
+        status:"pending", actualRevenue:0,
+        createdAt:serverTimestamp(), submittedSlot:currentSlot,
+      });
+      ["tm-m-unplanned-id","tm-m-unplanned-name","tm-m-unplanned-rev","tm-m-unplanned-remark"]
+        .forEach(id=>{const el=document.getElementById(id);if(el)el.value="";});
+      document.getElementById("tm-m-unplanned-plan").value="";
+      showToast("Unplanned case added!","success");
+    } catch(e) { showToast("Failed: "+e.message,"error"); }
+    setLoading(false); closeModal("tm-unplanned");
   };
 
   /* ── PASSWORD CHANGE ── */
@@ -1663,7 +1704,7 @@
               <option value="COLD">&#10052;&#65039; COLD</option>
             </select>
           </div>
-          <div class="form-group"><label>Expected Revenue (INR) *</label><input id="abtl-f-rev" type="number" placeholder="e.g. 12000" min="0"></div>
+          <div class="form-group"><label>Expected Revenue (INR) *</label><input id="abtl-f-rev" type="number" placeholder="e.g. 12000" min="10000" max="100000"></div>
           <div class="form-group"><label>Activation Date</label>
             <input id="abtl-f-date" type="date" value="${todayStr()}" max="${todayStr()}">
             <div style="font-size:10px;color:var(--muted);margin-top:2px">Today by default. Change only for missed past entries.</div>
@@ -1701,7 +1742,7 @@
           </div>
         </div>
         <div class="form-grid-2" style="margin-top:12px">
-          <div class="form-group"><label>Expected Revenue (INR) *</label><input id="tm-f-rev" type="number" placeholder="e.g. 12000" min="0"></div>
+          <div class="form-group"><label>Expected Revenue (INR) *</label><input id="tm-f-rev" type="number" placeholder="e.g. 12000" min="10000" max="100000"></div>
           <div class="form-group"><label>Remark / Follow-up Note</label><input id="tm-f-remark" type="text" placeholder="e.g. Callback at 3pm"></div>
         </div>
         <div style="margin-top:1rem"><button class="btn-add" onclick="addDirectEntry()">+ Add to Direct Pipeline</button></div>
@@ -4113,7 +4154,7 @@ tr:hover td { background: var(--surface-2); }
           </div>
           <div class="form-group">
             <label>Expected Revenue (INR) *</label>
-            <input id="f-rev" type="number" placeholder="e.g. 12000" min="0">
+            <input id="f-rev" type="number" placeholder="e.g. 12000" min="10000" max="100000">
           </div>
           <div class="form-group">
             <label>Remark / Follow-up Note</label>
@@ -4482,7 +4523,7 @@ tr:hover td { background: var(--surface-2); }
       </div>
       <div class="modal-field" style="margin-bottom:0">
         <label>Expected Revenue (INR) *</label>
-        <input id="m-unplanned-rev" type="number" placeholder="e.g. 12000" min="0">
+        <input id="m-unplanned-rev" type="number" placeholder="e.g. 12000" min="10000" max="100000">
       </div>
     </div>
     <div class="modal-field-row" style="margin-top:14px">
@@ -4761,60 +4802,6 @@ window.updateSetPWStrength = function(pw) {
 // ── FILTER SYSTEM ──
 const tableFilters = {};
 
-var tmUnplMode = "pending";
-window.setTMUnplannedTab = function(mode) {
-  tmUnplMode = mode;
-  var isPend = mode === "pending";
-  var pb=document.getElementById("tm-unpl-tab-pending"), cb=document.getElementById("tm-unpl-tab-converted");
-  var aw=document.getElementById("tm-unpl-actual-wrap"), sb=document.getElementById("tm-unpl-submit-btn");
-  if(pb){pb.style.background=isPend?"var(--brand)":"var(--bg)";pb.style.color=isPend?"white":"var(--muted)";pb.style.borderColor=isPend?"var(--brand)":"var(--border)";}
-  if(cb){cb.style.background=!isPend?"#27500A":"var(--bg)";cb.style.color=!isPend?"white":"var(--muted)";cb.style.borderColor=!isPend?"#27500A":"var(--border)";}
-  if(aw) aw.style.display=isPend?"none":"block";
-  if(sb) sb.textContent=isPend?"Add as Pending":"Mark as Converted";
-};
-window.submitTMUnplanned = async function() {
-  // Use window-exposed references (set on login) since this runs outside the ES module
-  const db       = window.__dt_db;
-  const user     = window.__dt_user;
-  const profile  = window.__dt_profile;
-  const _addDoc  = window.__tm_addDoc;
-  const _collection = window.__tm_collection;
-  const _serverTimestamp = window.__dt_serverTimestamp;
-  const _allEntries = window.allEntriesGlobal || [];
-  const _todayStr = window.todayStr ? window.todayStr() : new Date().toISOString().split("T")[0];
-  const _currentSlot = window.__tm_currentSlot || "12 PM";
-
-  if (!db || !user || !profile) { showToast("App not ready — please wait and try again","error"); return; }
-
-  const mid    = document.getElementById("tm-m-unplanned-id").value.trim().toUpperCase();
-  const mname  = document.getElementById("tm-m-unplanned-name").value.trim();
-  const plan   = document.getElementById("tm-m-unplanned-plan").value;
-  const heat   = document.getElementById("tm-m-unplanned-heat").value;
-  const rev    = parseInt(document.getElementById("tm-m-unplanned-rev").value)||0;
-  const remark = document.getElementById("tm-m-unplanned-remark").value.trim();
-  if (!mid||!mname||!plan) { showToast("Member ID, Name and Plan are required","error"); return; }
-  if (rev <= 0)             { showToast("Please enter revenue","error"); return; }
-  const exists = _allEntries.find(e=>e.memberId===mid&&e.tlEmail===user.email&&e.date===_todayStr);
-  if (exists) { showToast("This Member ID is already in today's pipeline","error"); return; }
-  setLoading(true);
-  try {
-    await _addDoc(_collection(db,"entries"),{
-      tlEmail:user.email, tlName:profile.name+" (Direct)",
-      tmEmail:user.email, zone:profile.zone,
-      date:_todayStr, memberId:mid, memberName:mname,
-      plan, revenue:rev, remark, paName:profile.name,
-      slot:_currentSlot, heat, isUnplanned:true, isDirect:true,
-      status:"pending", actualRevenue:0,
-      createdAt:_serverTimestamp(), submittedSlot:_currentSlot,
-    });
-    ["tm-m-unplanned-id","tm-m-unplanned-name","tm-m-unplanned-rev","tm-m-unplanned-remark"]
-      .forEach(id=>{const el=document.getElementById(id);if(el)el.value="";});
-    document.getElementById("tm-m-unplanned-plan").value="";
-    showToast("Unplanned case added!","success");
-  } catch(e) { showToast("Failed: "+e.message,"error"); }
-  setLoading(false); closeModal("tm-unplanned");
-};
-
 window.toggleFilter = function(tableId, type, value) {
   if (!tableFilters[tableId]) tableFilters[tableId] = { heat:[], status:[] };
   const arr = tableFilters[tableId][type];
@@ -5002,7 +4989,7 @@ window.generateScorecard = async function() {
       </div>
     </div>
     <div class="form-group" style="margin-top:8px"><label>Expected Revenue (INR) *</label>
-      <input id="tm-m-unplanned-rev" type="number" placeholder="e.g. 12000" min="0" style="width:100%;padding:9px 12px;border:0.5px solid rgba(0,0,0,0.15);border-radius:var(--radius);font-family:var(--font);font-size:13px;box-sizing:border-box">
+      <input id="tm-m-unplanned-rev" type="number" placeholder="e.g. 12000" min="10000" max="100000" style="width:100%;padding:9px 12px;border:0.5px solid rgba(0,0,0,0.15);border-radius:var(--radius);font-family:var(--font);font-size:13px;box-sizing:border-box">
     </div>
     <div class="form-group" style="margin-top:8px"><label>Remark</label>
       <input id="tm-m-unplanned-remark" type="text" placeholder="e.g. Inbound call, reference from member" style="width:100%;padding:9px 12px;border:0.5px solid rgba(0,0,0,0.15);border-radius:var(--radius);font-family:var(--font);font-size:13px;box-sizing:border-box">
