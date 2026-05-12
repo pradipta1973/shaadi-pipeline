@@ -286,7 +286,11 @@
       window.__dt_setDoc = setDoc;
       window.__dt_updateDoc = updateDoc;
       window.__dt_firestore = { getDocs, collection, query, where };
-      // ──────────────────────────────────────────────────────────
+      // Expose for TM unplanned modal (runs outside ES module scope)
+      window.__tm_addDoc = addDoc;
+      window.__tm_collection = collection;
+      // currentSlot is updated by setSlot — keep in sync
+      window.__tm_currentSlot = currentSlot;
       setupNav(); subscribeEntries(); loadWeeklyData(); loadMTDData(); loadPastData();
       if (currentProfile.role==="tl") setTimeout(loadPAList, 100);
       if (currentProfile.role==="rm"||currentProfile.role==="tm") loadTargets();
@@ -543,6 +547,7 @@
 
   window.setSlot = function(el, slot) {
     currentSlot = slot;
+    window.__tm_currentSlot = slot; // keep in sync for TM unplanned modal
     document.querySelectorAll(".slot-tab").forEach(b=>b.classList.remove("active"));
     el.classList.add("active");
     document.getElementById("slot-label").textContent = "Slot: "+slot;
@@ -4768,36 +4773,44 @@ window.setTMUnplannedTab = function(mode) {
   if(sb) sb.textContent=isPend?"Add as Pending":"Mark as Converted";
 };
 window.submitTMUnplanned = async function() {
+  // Use window-exposed references (set on login) since this runs outside the ES module
+  const db       = window.__dt_db;
+  const user     = window.__dt_user;
+  const profile  = window.__dt_profile;
+  const _addDoc  = window.__tm_addDoc;
+  const _collection = window.__tm_collection;
+  const _serverTimestamp = window.__dt_serverTimestamp;
+  const _allEntries = window.allEntriesGlobal || [];
+  const _todayStr = window.todayStr ? window.todayStr() : new Date().toISOString().split("T")[0];
+  const _currentSlot = window.__tm_currentSlot || "12 PM";
+
+  if (!db || !user || !profile) { showToast("App not ready — please wait and try again","error"); return; }
+
   const mid    = document.getElementById("tm-m-unplanned-id").value.trim().toUpperCase();
   const mname  = document.getElementById("tm-m-unplanned-name").value.trim();
   const plan   = document.getElementById("tm-m-unplanned-plan").value;
   const heat   = document.getElementById("tm-m-unplanned-heat").value;
   const rev    = parseInt(document.getElementById("tm-m-unplanned-rev").value)||0;
-  const actEl  = document.getElementById("tm-m-unplanned-actual");
-  const actual = actEl ? parseInt(actEl.value)||0 : 0;
   const remark = document.getElementById("tm-m-unplanned-remark").value.trim();
-  const isConv = tmUnplMode === "converted";
   if (!mid||!mname||!plan) { showToast("Member ID, Name and Plan are required","error"); return; }
   if (rev <= 0)             { showToast("Please enter revenue","error"); return; }
-  if (isConv && actual<=0)  { showToast("Please enter actual revenue collected","error"); return; }
-  const exists = allEntries.find(e=>e.memberId===mid&&e.tlEmail===currentUser.email&&e.date===todayStr());
-  if (exists)               { showToast("This Member ID is already in today's pipeline","error"); return; }
+  const exists = _allEntries.find(e=>e.memberId===mid&&e.tlEmail===user.email&&e.date===_todayStr);
+  if (exists) { showToast("This Member ID is already in today's pipeline","error"); return; }
   setLoading(true);
   try {
-    await addDoc(collection(db,"entries"),{
-      tlEmail:currentUser.email, tlName:currentProfile.name+" (Direct)",
-      tmEmail:currentUser.email, zone:currentProfile.zone,
-      date:todayStr(), memberId:mid, memberName:mname,
-      plan, revenue:rev, remark, paName:currentProfile.name,
-      slot:currentSlot, heat, isUnplanned:true, isDirect:true,
-      status:isConv?"converted":"pending", actualRevenue:isConv?actual:0,
-      createdAt:serverTimestamp(), submittedSlot:currentSlot,
+    await _addDoc(_collection(db,"entries"),{
+      tlEmail:user.email, tlName:profile.name+" (Direct)",
+      tmEmail:user.email, zone:profile.zone,
+      date:_todayStr, memberId:mid, memberName:mname,
+      plan, revenue:rev, remark, paName:profile.name,
+      slot:_currentSlot, heat, isUnplanned:true, isDirect:true,
+      status:"pending", actualRevenue:0,
+      createdAt:_serverTimestamp(), submittedSlot:_currentSlot,
     });
     ["tm-m-unplanned-id","tm-m-unplanned-name","tm-m-unplanned-rev","tm-m-unplanned-remark"]
       .forEach(id=>{const el=document.getElementById(id);if(el)el.value="";});
-    if(actEl) actEl.value="";
     document.getElementById("tm-m-unplanned-plan").value="";
-    showToast(isConv?"Spot closure recorded!":"Unplanned case added!","success");
+    showToast("Unplanned case added!","success");
   } catch(e) { showToast("Failed: "+e.message,"error"); }
   setLoading(false); closeModal("tm-unplanned");
 };
